@@ -1,39 +1,21 @@
 {
-  "name": "iotjs-vscode-extension",
-  "displayName": "IoT.js",
-  "description": "IoT.js Debugging, IntelliSense for Visual Studio Code",
-  "version": "0.11.0",
+  "name": "escargot-vscode-extension",
+  "displayName": "Escargot",
+  "description": "Escargot Debugging",
+  "version": "0.1.0",
   "publisher": "Samsung",
   "author": {
     "name": "Samsung Electronics Co., Ltd."
   },
-  "homepage": "https://github.com/Samsung/iotjs-vscode-extension",
+  "homepage": "https://github.com/rerobika/escargot-vscode-extension",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Samsung/iotjs-vscode-extension.git"
+    "url": "git+https://github.com/rerobika/escargot-vscode-extension.git"
   },
-  "bugs": {
-    "url": "https://github.com/Samsung/iotjs-vscode-extension/issues"
-  },
-  "qna": "marketplace",
-  "markdown": "github",
-  "badges": [
-    {
-      "url": "https://travis-ci.org/Samsung/iotjs-vscode-extension.svg?branch=master",
-      "href": "https://travis-ci.org/Samsung/iotjs-vscode-extension",
-      "description": "Continuous integration (Travis)"
-    },
-    {
-      "url": "https://img.shields.io/badge/licence-Apache%202.0-brightgreen.svg?style=flat",
-      "href": "https://github.com/Samsung/iotjs-vscode-extension/blob/master/LICENSE",
-      "description": "Apache-2.0 LICENSE"
-    }
-  ],
   "license": "Apache-2.0",
   "private": false,
   "keywords": [
-    "iotjs",
-    "jerryscript",
+    "escargot",
     "debug",
     "debugger",
     "javascript",
@@ -51,8 +33,7 @@
   ],
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "copy": "cp ./src/IotjsFunctions.json ./out/",
-    "compile": "tsc -p ./ && npm run copy",
+    "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "postinstall": "node ./node_modules/vscode/bin/install",
     "test": "node ./node_modules/vscode/bin/test"
@@ -84,37 +65,13 @@
     "*",
     "onLanguage:javascript",
     "onDebug",
-    "onCommand:iotjs-debug.initialConfigurations",
-    "onCommand:iotjs-debug.createTizenProject",
-    "onCommand:iotjs-debug.buildAndInstall"
+    "onCommand:escargot-debug.initialConfigurations"
   ],
   "main": "./out/extension.js",
   "files": [
     "out/**"
   ],
   "contributes": {
-    "commands": [
-      {
-        "command": "iotjs-debug.createTizenProject",
-        "title": "Create IoT.js Tizen Project"
-      },
-      {
-        "command": "iotjs-debug.buildAndInstall",
-        "title": "Build and Install"
-      }
-    ],
-    "menus": {
-      "editor/title": [
-        {
-          "command": "iotjs-debug.createTizenProject",
-          "group": "navigation"
-        },
-        {
-          "command": "iotjs-debug.buildAndInstall",
-          "group": "navigation"
-        }
-      ]
-    },
     "breakpoints": [
       {
         "language": "javascript"
@@ -125,17 +82,11 @@
     ],
     "debuggers": [
       {
-        "type": "iotjs",
-        "label": "IoT.js Debug",
-        "program": "./out/IotjsDebugger.js",
+        "type": "escargot",
+        "label": "Escargot Debug",
+        "program": "./out/EscargotDebugger.js",
         "runtime": "node",
-        "enableBreakpointsFor": {
-          "languageIds": [
-            "javascript",
-            "typescript"
-          ]
-        },
-        "initialConfigurations": "iotjs-debug.initialConfigurations",
+        "initialConfigurations": "escargot-debug.initialConfigurations",
         "configurationAttributes": {
           "attach": {
             "properties": {
@@ -146,8 +97,8 @@
               },
               "port": {
                 "type": "number",
-                "description": "Debug port to attach to. Default is 5001.",
-                "default": 5001
+                "description": "Debug port to attach to. Default is 6501.",
+                "default": 6501
               },
               "localRoot": {
                 "type": [
@@ -166,22 +117,6 @@
                 "type": "number",
                 "description": "Set log level for the debugger: 0 none, 1 error, 2 session, 3 protocol, 4 verbose",
                 "default": 0
-              },
-              "tizenStudioPath": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Absolute path to Tizen Studio.",
-                "default": null
-              },
-              "rpmPath": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Absolute path to IoT.js Tizen rpm package.",
-                "default": null
               }
             }
           },
@@ -191,7 +126,7 @@
               "program": {
                 "type": "string",
                 "description": "Absolute path to the program.",
-                "default": "iotjs"
+                "default": "escargot"
               },
               "stopOnEntry": {
                 "type": "boolean",
@@ -232,62 +167,41 @@
               "port": {
                 "type": "number",
                 "description": "Debug port.",
-                "default": 5001
-              },
-              "tizenStudioPath": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Absolute path to Tizen Studio.",
-                "default": null
-              },
-              "rpmPath": {
-                "type": [
-                  "string",
-                  "null"
-                ],
-                "description": "Absolute path to IoT.js Tizen rpm package.",
-                "default": null
+                "default": 6501
               }
             }
           }
         },
         "configurationSnippets": [
           {
-            "label": "IoT.js: Attach",
-            "description": "Attach to a running IoT.js or JerryScript.",
+            "label": "Escargot: Attach",
+            "description": "Attach to a running Escargot.",
             "body": {
-              "name": "IoT.js: Attach",
-              "type": "iotjs",
+              "name": "Escargot: Attach",
+              "type": "escargot",
               "request": "attach",
               "address": "localhost",
-              "port": 5001,
+              "port": 6501,
               "localRoot": "${workspaceRoot}",
-              "tizenStudioPath": "",
-              "rpmPath": "",
               "stopOnEntry": false,
               "debugLog": 0
             }
           },
           {
-            "label": "IoT.js: Launch",
-            "description": "Launch IoT.js or JerryScript automatically.",
+            "label": "Escargot: Launch",
+            "description": "Launch Escargot automatically.",
             "body": {
-              "name": "IoT.js: Launch",
-              "type": "iotjs",
+              "name": "Escargot: Launch",
+              "type": "escargot",
               "request": "launch",
-              "program": "iotjs",
+              "program": "escargot",
               "stopOnEntry": false,
               "localRoot": "${workspaceRoot}",
-              "tizenStudioPath": "",
-              "rpmPath": "",
-              "port": 5001,
+              "port": 6501,
               "address": "localhost",
               "debugLog": 0,
               "args": [
-                "--start-debug-server",
-                "--debugger-wait-source"
+                "--start-debug-server"
               ]
             }
           }
