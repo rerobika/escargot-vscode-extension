@@ -61,7 +61,7 @@ export class Breakpoint {
 export class ParsedFunction {
   readonly isFunc: boolean;
   readonly scriptId: number;
-  readonly byteCodeCP: number;
+  readonly functionPtr: string;
   readonly line: number;
   readonly column: number;
   readonly name: string;
@@ -72,9 +72,9 @@ export class ParsedFunction {
   source?: Array<string>;
   sourceName?: string;
 
-  constructor(byteCodeCP: number, frame: ParserStackFrame) {
+  constructor(functionPtr: string, frame: ParserStackFrame) {
     this.isFunc = frame.isFunc;
-    this.byteCodeCP = byteCodeCP;
+    this.functionPtr = functionPtr;
     this.scriptId = frame.scriptId;
     this.line = frame.line;
     this.column = frame.column;

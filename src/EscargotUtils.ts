@@ -121,15 +121,10 @@ export const decodeMessage = (config: ByteConfig, format: string, message: Uint8
       return;
     }
 
-    if (f === 'C' && config.pointerSize === 2) {
-      if (config.littleEndian) {
-        value = message[offset] | (message[offset + 1] << 8);
-      } else {
-        value = (message[offset] << 8) | message[offset + 1];
-      }
-
+    if (f === 'C' && config.pointerSize === 8) {
+      value = String.fromCharCode(...message.subarray(offset, offset + 8));
       result.push(value);
-      offset += 2;
+      offset += 8;
       return;
     }
 
@@ -154,7 +149,7 @@ export const decodeMessage = (config: ByteConfig, format: string, message: Uint8
  * @param format String of 'B', 'C', and 'I' characters
  * @param values Array of values to format into message
  */
-export const encodeMessage = (config: ByteConfig, format: string, values: Array<number>) => {
+export const encodeMessage = (config: ByteConfig, format: string, values: Array<any>) => {
   const length = getFormatSize(config, format);
   const message = new Uint8Array(length);
   let offset = 0;
@@ -174,19 +169,9 @@ export const encodeMessage = (config: ByteConfig, format: string, values: Array<
       return;
     }
 
-    if (f === 'C' && config.pointerSize === 2) {
-      if ((value & 0xffff) !== value) {
-        throw new Error('expected two-byte value');
-      }
-      const lowByte = value & 0xff;
-      const highByte = (value >> 8) & 0xff;
-
-      if (config.littleEndian) {
-        message[offset++] = lowByte;
-        message[offset++] = highByte;
-      } else {
-        message[offset++] = highByte;
-        message[offset++] = lowByte;
+    if (f === 'C' && config.pointerSize === 8) {
+      for (let i = 0; i < 8; i++) {
+        message[offset++] = value.charCodeAt(i);
       }
       return;
     }
@@ -206,35 +191,12 @@ export const encodeMessage = (config: ByteConfig, format: string, values: Array<
   return message;
 };
 
-export const cesu8ToString = (array: Uint8Array | undefined) => {
+export const createStringFromArray = (array: Uint8Array | undefined) => {
   if (!array) {
     return '';
   }
 
-  const length = array.byteLength;
-
-  let i = 0;
-  let result = '';
-
-  while (i < length) {
-    let chr = array[i++];
-
-    if (chr >= 0x7f) {
-      if (chr & 0x20) {
-        // Three byte long character
-        chr = ((chr & 0xf) << 12) | ((array[i] & 0x3f) << 6) | (array[i + 1] & 0x3f);
-        i += 2;
-      } else {
-        // Two byte long character
-        chr = ((chr & 0x1f) << 6) | (array[i] & 0x3f);
-        ++i;
-      }
-    }
-
-    result += String.fromCharCode(chr);
-  }
-
-  return result;
+  return String.fromCharCode(...array);
 };
 
 /**
@@ -302,4 +264,19 @@ export const assembleUint8Arrays = (baseArray: Uint8Array | undefined, nextArray
   result.set(baseArray);
 
   return result;
+};
+
+export const convert16bitTo8bit = (config: ByteConfig, array: Uint8Array) => {
+  if (config.littleEndian) {
+    return array;
+  }
+
+  let newArray = new Uint8Array (array.length);
+
+  for (let i = 0; i < newArray.length; i += 2) {
+    newArray[i] = array[i + 1];
+    newArray[i + 1] = array[i];
+  }
+
+  return newArray;
 };

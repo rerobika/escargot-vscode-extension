@@ -43,11 +43,13 @@ const provideInitialConfigurations = (): string => {
 };
 
 export const activate = (context: vscode.ExtensionContext) => {
+  console.log("activated yea");
   context.subscriptions.push(
     vscode.commands.registerCommand('escargot-debug.provideInitialConfigurations', provideInitialConfigurations),
-  );
-};
+    );
+  };
 
-export const deactivate = () => {
+  export const deactivate = () => {
+    console.log("deactivate");
   // Nothing to do.
 };
