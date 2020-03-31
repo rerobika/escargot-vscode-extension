@@ -28,15 +28,14 @@ export type Pointer = string;
 export type ByteCodeOffset = number;
 export type LoggerFunction = (message: any, level: number) => void;
 
-export interface ParserStackFrame {
-  isFunc: boolean;
+export interface ParserFrame {
+  isFunction: boolean;
   scriptId: number;
   line: number;
   column: number;
   name: string;
-  source: string;
+  source: Array<string>;
   sourceName?: string;
-  stack: Array<ParserStackFrame>;
   lines: Array<number>;
   offsets: Array<ByteCodeOffset>;
   byteCodePtr?: Pointer;
@@ -86,14 +85,26 @@ interface ProtocolFunctionMap {
   [type: number]: (data: Uint8Array) => void;
 }
 
-export interface EscargotBacktraceResult {
-  totalFrames: number;
-  backtrace: Array<Breakpoint>;
-}
-
 interface FunctionMap {
   [cp: string]: ParsedFunction;
 }
+
+export interface EscargotBacktraceFrame {
+  function: ParsedFunction;
+  line: number;
+  column: number;
+}
+
+interface ScopeNameMap {
+  [type: number]: string;
+}
+
+export interface EscargotBacktraceResult {
+  totalFrames: number;
+  backtrace: Array<EscargotBacktraceFrame>;
+}
+
+
 
 interface LineFunctionMap {
   // maps line number to an array of functions
@@ -134,6 +145,8 @@ export interface EscargotScopeVariable {
   name: string;
   type: string;
   value: string;
+  fullType: number;
+  hasValue: boolean;
 }
 
 // abstracts away the details of the protocol
@@ -145,8 +158,8 @@ export class EscargotDebugProtocolHandler {
   private byteConfig: ByteConfig;
   private version: number = 0;
   private functionMap: ProtocolFunctionMap;
+  private scopeNameMap: ScopeNameMap;
 
-  private stack: Array<ParserStackFrame> = [];
   // first element is a dummy because sources is 1-indexed
   private sources: Array<ParsedSource> = [{}];
   // first element is a dummy because lineLists is 1-indexed
@@ -157,10 +170,15 @@ export class EscargotDebugProtocolHandler {
   private sourceNameData?: Uint8Array;
   private functionName?: string;
   private functionNameData?: Uint8Array;
+  private lines: Array<number> = [];
+  private offsets: Array<ByteCodeOffset> = [];
+  private isFunction: boolean = false;
   private functions: FunctionMap = {};
   private newFunctions: FunctionMap = {};
+  private scopeMessage?: Array<number> = [];
   private backtraceData: EscargotBacktraceResult = {totalFrames : 0, backtrace: []};
 
+  private maxMessageSize: number = 0;
   private nextScriptID: number = 1;
   private exceptionString?: string;
   private evalsPending: number = 0;
@@ -168,6 +186,8 @@ export class EscargotDebugProtocolHandler {
   private lastBreakpointExact: boolean = true;
   private activeBreakpoints: Array<Breakpoint> = [];
   private nextBreakpointIndex: number = 0;
+  private scopeVariables: Array<EscargotScopeVariable> = [];
+  private currentScopeVariable: EscargotScopeVariable
 
   private log: LoggerFunction;
   private requestQueue: PendingRequest[];
@@ -178,7 +198,6 @@ export class EscargotDebugProtocolHandler {
   constructor(delegate: EscargotDebugProtocolDelegate, log?: LoggerFunction) {
     this.delegate = delegate;
     this.log = log || <any>(() => {});
-    this.stack = [];
 
     this.byteConfig = {
       pointerSize: 0,
@@ -198,10 +217,10 @@ export class EscargotDebugProtocolHandler {
       [SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_16BIT]: this.onSourceCode16,
       [SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_16BIT_END]: this.onSourceCode16,
 
-      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT]: this.onSourceCodeName8,
-      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT_END]: this.onSourceCodeName8,
-      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_16BIT]: this.onSourceCodeName16,
-      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_16BIT_END]: this.onSourceCodeName16,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT]: this.onFileName8,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT_END]: this.onFileName8,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_16BIT]: this.onFileName16,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_16BIT_END]: this.onFileName16,
 
       [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_8BIT]: this.onFunctionName8,
       [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_8BIT_END]: this.onFunctionName8,
@@ -212,13 +231,40 @@ export class EscargotDebugProtocolHandler {
       [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_PTR]: this.onFunctionPtr,
       [SP.SERVER.ESCARGOT_DEBUGGER_BREAKPOINT_HIT]: this.onBreakpointHit,
       [SP.SERVER.ESCARGOT_DEBUGGER_EXCEPTION_HIT]: this.onBreakpointHit,
-      [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_TOTAL]: this.onBacktraceTotal,
 
-      [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_8BIT]: this.onBacktrace,
-      [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_8BIT_END]: this.onBacktrace,
-      [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_16BIT]: this.onBacktrace,
-      [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_16BIT_END]: this.onBacktrace,
+      [SP.SERVER.ESCARGOT_DEBUGGER_EVAL_RESULT_8BIT]: null,
+      [SP.SERVER.ESCARGOT_DEBUGGER_EVAL_RESULT_8BIT_END]: null,
+      [SP.SERVER.ESCARGOT_DEBUGGER_EVAL_RESULT_16BIT]: null,
+      [SP.SERVER.ESCARGOT_DEBUGGER_EVAL_RESULT_16BIT_END]: null,
+
+      [SP.SERVER.ESCARGOT_DEBUGGER_EVAL_FAILED_8BIT]: null,
+      [SP.SERVER.ESCARGOT_DEBUGGER_EVAL_FAILED_8BIT_END]: null,
+      [SP.SERVER.ESCARGOT_DEBUGGER_EVAL_FAILED_16BIT]: null,
+      [SP.SERVER.ESCARGOT_DEBUGGER_EVAL_FAILED_16BIT_END]: null,
+
+      [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_TOTAL]: this.onBacktraceTotal,
+      [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE]: this.onBacktrace,
+      [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_END]: this.onBacktrace,
+
+      [SP.SERVER.ESCARGOT_DEBUGGER_SCOPE_CHAIN]: this.onScopeChain,
+      [SP.SERVER.ESCARGOT_DEBUGGER_SCOPE_CHAIN_END]: this.onScopeChainEnd,
+      [SP.SERVER.ESCARGOT_DEBUGGER_VARIABLE]: this.onScopeVariables,
+
+      [SP.SERVER.ESCARGOT_DEBUGGER_VARIABLE_8BIT]: this.onScopeVariablesData,
+      [SP.SERVER.ESCARGOT_DEBUGGER_VARIABLE_8BIT_END]: this.onScopeVariablesData,
+      [SP.SERVER.ESCARGOT_DEBUGGER_VARIABLE_16BIT]: this.onScopeVariablesData,
+      [SP.SERVER.ESCARGOT_DEBUGGER_VARIABLE_16BIT_END]: this.onScopeVariablesData,
+
     };
+
+    this.scopeNameMap = {
+      [SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_GLOBAL]: "Global Environment",
+      [SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_FUNCTION]: "Function Environment",
+      [SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_DECLARATIVE]: "Declarative Environment",
+      [SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_OBJECT]: "Object Environment",
+      [SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_MODULE]: "Module Environment",
+      [SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_UNKNOWN]: "Unknown Environment",
+    }
 
     this.requestQueue = [];
     this.currentRequest = null;
@@ -298,12 +344,14 @@ export class EscargotDebugProtocolHandler {
 
   public onConfiguration(data: Uint8Array): void {
     this.logPacket('Configuration');
-    if (data.length != 2) {
+    if (data.length != 3) {
       this.abort('configuration message wrong size');
       return;
     }
 
-    this.byteConfig.pointerSize = data[1];
+    this.maxMessageSize = data[1];
+    console.log(this.maxMessageSize);
+    this.byteConfig.pointerSize = data[2];
 
     if (this.byteConfig.pointerSize !== 4
         && this.byteConfig.pointerSize !== 8) {
@@ -317,29 +365,27 @@ export class EscargotDebugProtocolHandler {
       return;
     }
 
-    const frame = this.stack.pop();
-    if (!frame) {
-      throw new Error('missing parser stack frame');
-    }
-
 
     const decoded = this.decodeMessage('CII', data, 1);
-    frame.line = decoded[1];
-    frame.column = decoded[2];
-    frame.name = this.functionName;
+
+    const frame = <ParserFrame> {
+      isFunction: this.isFunction,
+      scriptId: this.nextScriptID - 1,
+      line: decoded[1],
+      column: decoded[2],
+      name: this.functionName,
+      source: this.source.split(/\n/),
+      sourceName: this.sourceName,
+      lines: this.lines,
+      offsets: this.offsets,
+    }
 
     const func = new ParsedFunction(decoded[0], frame);
     this.newFunctions[decoded[0]] = func;
-    if (this.stack.length > 0) {
-      return;
-    }
 
     // FIXME: it seems like this is probably unnecessarily keeping the
     //   whole file's source to this point?
     func.source = this.source.split(/\n/);
-    func.sourceName = this.sourceName;
-    this.source = '';
-    this.sourceName = undefined;
 
     const lineList: LineFunctionMap = {};
     for (const p in this.newFunctions) {
@@ -356,6 +402,8 @@ export class EscargotDebugProtocolHandler {
       }
     }
     this.lineLists.push(lineList);
+    this.lines = [];
+    this.offsets = [];
     this.nextScriptID++;
     this.newFunctions = {};
   }
@@ -376,33 +424,13 @@ export class EscargotDebugProtocolHandler {
       throw new Error('unexpected breakpoint list message length');
     }
 
-    this.log(data.length + "", 4);
-
-    const stackFrame = this.pushStackItem();
-
     for (let i = 1; i < data.byteLength; i += 8) {
       let decoded = this.decodeMessage('II', data, i);
       this.log(decoded[0] + ":" + decoded[1], 4);
-      stackFrame.lines.push(decoded[0]);
-      stackFrame.offsets.push(decoded[1]);
+      this.lines.push(decoded[0]);
+      this.offsets.push(decoded[1]);
     }
     this.log("succ", 4);
-  }
-
-  private pushStackItem(): ParserStackFrame {
-    let frame = <ParserStackFrame>{
-      isFunc: false,
-      scriptId: this.nextScriptID,
-      line: 1,
-      column: 1,
-      name: '',
-      source: '',
-      lines: [],
-      offsets: [],
-    }
-
-    this.stack.push(frame);
-    return frame;
   }
 
   private addSource(): void {
@@ -413,6 +441,7 @@ export class EscargotDebugProtocolHandler {
       source: this.source,
     };
     this.sourceData = undefined;
+    this.functionName = 'global';
   }
 
   public onSourceCode16(data: Uint8Array): void {
@@ -434,7 +463,7 @@ export class EscargotDebugProtocolHandler {
       return;
     }
 
-    this.pushStackItem();
+    this.isFunction = false;
     this.sourceData = assembleUint8Arrays(this.sourceData, data);
     if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_8BIT_END) {
       this.addSource();
@@ -452,10 +481,12 @@ export class EscargotDebugProtocolHandler {
         'lineCount': this.source.split(/\n/).length,
       });
     }
+
+    this.nextScriptID++;
   }
 
-  public onSourceCodeName16(data: Uint8Array): void {
-    this.logPacket('Source Code Name 16');
+  public onFileName16(data: Uint8Array): void {
+    this.logPacket('FILE NAME Name 16');
     this.sourceNameData = assembleUint8Arrays(this.sourceNameData, convert16bitTo8bit(this.byteConfig, data));
 
     if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_16BIT_END) {
@@ -463,7 +494,7 @@ export class EscargotDebugProtocolHandler {
     }
   }
 
-  public onSourceCodeName8(data: Uint8Array): void {
+  public onFileName8(data: Uint8Array): void {
     this.logPacket('Source Code Name 8');
     this.sourceNameData = assembleUint8Arrays(this.sourceNameData, data);
 
@@ -478,6 +509,7 @@ export class EscargotDebugProtocolHandler {
     if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_16BIT_END) {
       this.functionName = createStringFromArray(this.functionNameData);
       this.functionNameData = undefined;
+      this.isFunction = true;
     }
   }
 
@@ -487,6 +519,7 @@ export class EscargotDebugProtocolHandler {
     if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_8BIT_END) {
       this.functionName = createStringFromArray(this.functionNameData);
       this.functionNameData = undefined;
+      this.isFunction = true;
     }
   }
 
@@ -603,25 +636,148 @@ export class EscargotDebugProtocolHandler {
     this.lastStopType = null;
   }
 
-  public onBacktraceTotal(data: Uint8Array): void {
-    this.logPacket('Backtrace Total');
+  public onScopeChain(data: Uint8Array): void {
+    this.logPacket('ScopeChain');
 
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_TOTAL) {
-      this.backtraceData.totalFrames = this.decodeMessage('I', data, 1);
-      this.backtraceData.backtrace = [];
+    for (let i = 1; i < data.byteLength; i++) {
+      this.scopeMessage.push(data[i]);
     }
   }
 
-  public onBacktrace(data: Uint8Array): EscargotBacktraceResult {
-    this.logPacket('Backtrace');
+  public onScopeChainEnd(data: Uint8Array): Array<EscargotScopeChain> {
+    this.logPacket('ScopeChainEnd');
 
-    for (let i = 1; i < data.byteLength; i += this.byteConfig.pointerSize + 4) {
-      const breakpointData = this.decodeMessage('CI', data, i);
-      this.backtraceData.backtrace.push(this.getBreakpoint(breakpointData).breakpoint);
+    for (let i = 1; i < data.byteLength; i++) {
+      this.scopeMessage.push(data[i]);
     }
 
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_8BIT_END
-        || data[0] === SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_16BIT_END) {
+    const scopes: Array<EscargotScopeChain> = [];
+    for (let i = 0; i < this.scopeMessage.length; i++) {
+       if (this.scopeMessage[i] > SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_UNKNOWN) {
+        throw new Error('Invalid scope chain type!');
+      }
+
+      scopes.push({name: this.scopeNameMap[this.scopeMessage[i]],
+                   variablesReference: i,
+                   expensive: true});
+    }
+    this.scopeMessage = [];
+
+    return scopes;
+  }
+
+
+  public onScopeVariables(data: Uint8Array): any {
+    this.logPacket('ScopeVariables');
+    let fullType = this.decodeMessage('B', data, 1)[0];
+
+    if ((fullType & 0x3f) == SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_END) {
+      let scopeVariables = [];
+      Object.assign (scopeVariables, this.scopeVariables);
+      this.scopeVariables = [];
+      return scopeVariables;
+    }
+
+    this.currentScopeVariable = {name: '',
+                                 type: '',
+                                 value: '',
+                                 fullType,
+                                 hasValue: false};
+  }
+
+  public onScopeVariablesData(data: Uint8Array): void {
+    this.logPacket('ScopeVariables');
+
+    let variableType = this.currentScopeVariable.fullType & 0x3f;
+
+    if (this.currentScopeVariable.name == '') {
+      switch (variableType) {
+        case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_UNACCESSIBLE: {
+          this.currentScopeVariable.type = "unaccessible";
+          break;
+        }
+        case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_UNDEFINED: {
+          this.currentScopeVariable.type = "undefined";
+          break;
+        }
+        case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_NULL: {
+          this.currentScopeVariable.type = "null";
+          break;
+        }
+        case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_TRUE: {
+          this.currentScopeVariable.type = "true";
+          break;
+        }
+        case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_FALSE: {
+          this.currentScopeVariable.type = "false";
+          break;
+        }
+        case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_NUMBER: {
+          this.currentScopeVariable.type = "number";
+          this.currentScopeVariable.hasValue = true;
+          break;
+        }
+        case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_STRING: {
+          this.currentScopeVariable.type = "string";
+          this.currentScopeVariable.hasValue = true;
+          break;
+        }
+        case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_OBJECT: {
+          this.currentScopeVariable.type = "object";
+          break;
+        }
+        case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_ARRAY: {
+          this.currentScopeVariable.type = "array";
+          break;
+        }
+        case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_FUNCTION: {
+          this.currentScopeVariable.type = "function";
+          break;
+        }
+        default: {
+          throw Error ("Invalid scope variable type");
+        }
+      }
+
+      this.currentScopeVariable.name = createStringFromArray(data.subarray(1));
+      if (this.currentScopeVariable.fullType & SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_LONG_NAME) {
+        this.currentScopeVariable.name += "...";
+      }
+    }
+
+    if (!this.currentScopeVariable.hasValue) {
+      this.scopeVariables.push(this.currentScopeVariable);
+      return;
+    }
+
+    this.currentScopeVariable.value = createStringFromArray(data.subarray(1));
+    if (this.currentScopeVariable.fullType & SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_LONG_VALUE) {
+      this.currentScopeVariable.value += "...";
+    }
+    this.scopeVariables.push(this.currentScopeVariable);
+  }
+
+  public onBacktraceTotal(data: Uint8Array): void {
+    this.logPacket('Backtrace Total');
+
+    this.backtraceData.totalFrames = this.decodeMessage('I', data, 1);
+    this.backtraceData.backtrace = [];
+}
+
+  public onBacktrace(data: Uint8Array): EscargotBacktraceResult {
+    this.logPacket('Backtrace 8');
+
+    for (let i = 1; i < data.byteLength; i += this.byteConfig.pointerSize + 8) {
+      const backtraceData = this.decodeMessage('CII', data, i);
+      let frame = <EscargotBacktraceFrame>{
+        function: this.functions[backtraceData[0]],
+        line: backtraceData[1],
+        column: backtraceData[2]
+      }
+      this.backtraceData.backtrace.push(frame);
+    }
+
+    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_END) {
       if (this.delegate.onBacktrace) {
         this.delegate.onBacktrace(this.backtraceData);
       }
@@ -755,6 +911,26 @@ export class EscargotDebugProtocolHandler {
     ]));
   }
 
+  public requestScopes(): Promise<any> {
+    if (!this.lastBreakpointHit) {
+      return Promise.reject(new Error('scope chain not allowed while app running'));
+    }
+
+    return this.sendRequest(encodeMessage(this.byteConfig, 'B',
+                                          [SP.CLIENT.ESCARGOT_DEBUGGER_GET_SCOPE_CHAIN]));
+  }
+
+  public requestVariables(level?: number): Promise<any> {
+    if (!this.lastBreakpointHit) {
+      return Promise.reject(new Error('scope variables not allowed while app running'));
+    }
+
+    return this.sendRequest(encodeMessage(this.byteConfig, 'BI',
+                                          [SP.CLIENT.ESCARGOT_DEBUGGER_GET_SCOPE_VARIABLES,
+                                          level]));
+
+  }
+
   public requestBacktrace(start?: number, levels?: number): Promise<any> {
     if (start === undefined)
       start = 0;
@@ -779,6 +955,7 @@ export class EscargotDebugProtocolHandler {
   }
 
   private abort(message: string) {
+    debugger;
     if (this.delegate.onError) {
       this.log(`Abort: ${message}`, LOG_LEVEL.ERROR);
       this.delegate.onError(0, message);

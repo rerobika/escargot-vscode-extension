@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { ParserStackFrame } from './EscargotProtocolHandler';
+import { ParserFrame } from './EscargotProtocolHandler';
 
 export interface BreakpointMap {
   [index: number]: Breakpoint;
@@ -72,8 +72,8 @@ export class ParsedFunction {
   source?: Array<string>;
   sourceName?: string;
 
-  constructor(functionPtr: string, frame: ParserStackFrame) {
-    this.isFunc = frame.isFunc;
+  constructor(functionPtr: string, frame: ParserFrame) {
+    this.isFunc = frame.isFunction;
     this.functionPtr = functionPtr;
     this.scriptId = frame.scriptId;
     this.line = frame.line;
@@ -82,6 +82,9 @@ export class ParsedFunction {
     this.firstBreakpointLine = frame.lines[0];
     this.firstBreakpointOffset = frame.offsets[0];
     this.sourceName = frame.sourceName;
+    if (!this.isFunc) {
+      this.source = frame.source;
+    }
 
     for (let i = 0; i < frame.lines.length; i++) {
       const breakpoint = new Breakpoint({
