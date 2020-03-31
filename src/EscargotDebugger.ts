@@ -18,7 +18,7 @@
 
 import {
   DebugSession, InitializedEvent, OutputEvent, Thread, Source,
-  StoppedEvent, StackFrame, TerminatedEvent, ErrorDestination
+  StoppedEvent, StackFrame, TerminatedEvent, ErrorDestination, Scope, Handles
 } from 'vscode-debugadapter';
 import { DebugProtocol } from 'vscode-debugprotocol';
 import * as Fs from 'fs';
@@ -28,7 +28,7 @@ import { IAttachRequestArguments, ILaunchRequestArguments, TemporaryBreakpoint }
 import { EscargotDebuggerClient, EscargotDebuggerOptions } from './EscargotDebuggerClient';
 import {
   EscargotDebugProtocolDelegate, EscargotDebugProtocolHandler, EscargotMessageScriptParsed,
-  EscargotMessageExceptionHit, EscargotMessageBreakpointHit, EscargotBacktraceResult
+  EscargotMessageExceptionHit, EscargotMessageBreakpointHit, EscargotBacktraceResult, EscargotScopeChain
 } from './EscargotProtocolHandler';
 import { Breakpoint } from './EscargotBreakpoints';
 import { LOG_LEVEL } from './EscargotDebuggerConstants';
@@ -43,6 +43,7 @@ class EscargotDebugSession extends DebugSession {
   private _debugLog: number = 0;
   private _debuggerClient: EscargotDebuggerClient;
   private _protocolhandler: EscargotDebugProtocolHandler;
+  private _variableHandles = new Handles<string>();
 
   public constructor() {
     super();
@@ -143,6 +144,7 @@ class EscargotDebugSession extends DebugSession {
       onBreakpointHit: (ref: EscargotMessageBreakpointHit, type: string) => this.onBreakpointHit(ref, type),
       onExceptionHit: (data: EscargotMessageExceptionHit) => this.onExceptionHit(data),
       onScriptParsed: (data: EscargotMessageScriptParsed) => this.onScriptParsed(data),
+      onError: (code: number, message: string) => this.onClose()
     };
 
     this._protocolhandler = new EscargotDebugProtocolHandler(
@@ -172,6 +174,7 @@ class EscargotDebugSession extends DebugSession {
   protected disconnectRequest(
     response: DebugProtocol.DisconnectResponse, args: DebugProtocol.DisconnectArguments
   ): void {
+    debugger;
     this._debuggerClient.disconnect();
     this.sendEvent(new TerminatedEvent());
     this.sendResponse(response);
@@ -326,15 +329,16 @@ class EscargotDebugSession extends DebugSession {
     response: DebugProtocol.StackTraceResponse, args: DebugProtocol.StackTraceArguments
   ): Promise<void> {
     try {
+      debugger;
       const currentArgs = this._attachArgs || this._launchArgs;
       const backtraceData: EscargotBacktraceResult = await this._protocolhandler.requestBacktrace(args.startFrame,
                                                                                                args.levels);
       const stk = backtraceData.backtrace.map((f, i) => new StackFrame(
         1000 + i,
-        f.func.name || 'global',
-        this.pathToSource(`${currentArgs.localRoot}/${this.pathToBasename(f.func.sourceName)}`),
+        f.function.name || 'global',
+        this.pathToSource(`${currentArgs.localRoot}/${this.pathToBasename(f.function.sourceName)}`),
         f.line,
-        f.func.column)
+        f.column)
       );
 
       response.body = {
@@ -348,6 +352,55 @@ class EscargotDebugSession extends DebugSession {
       this.sendErrorResponse(response, 0, (<Error>error).message);
     }
   }
+
+  protected async scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments
+    ): Promise<void> {
+      try {
+        const scopesArray: Array<EscargotScopeChain> = await this._protocolhandler.requestScopes();
+        const scopes = new Array<Scope>();
+
+        for (const scope of scopesArray) {
+          scopes.push(new Scope(scope.name,
+                                this._variableHandles.create(scope.variablesReference.toString()),
+                                scope.expensive));
+        }
+
+        response.body = {
+          scopes: scopes
+        };
+
+        this.sendResponse(response);
+      }  catch (error) {
+        this.log(error.message, LOG_LEVEL.ERROR);
+        this.sendErrorResponse(response, 0, (<Error>error).message);
+      }
+    }
+
+    // protected async variablesRequest(response: DebugProtocol.VariablesResponse,
+    //                                  args: DebugProtocol.VariablesArguments
+    // ): Promise<void> {
+    //   try {
+    //     const variables = new Array<DebugProtocol.Variable>();
+    //     const id = this._variableHandles.get(args.variablesReference);
+    //     const scopeVariables: Array<JerryScopeVariable> = await this._protocolhandler.requestVariables(Number(id));
+
+    //     for (const variable of scopeVariables) {
+    //       variables.push({name: variable.name,
+    //                       evaluateName: variable.name,
+    //                       type: variable.type,
+    //                       value: variable.value,
+    //                       variablesReference: 0});
+    //     }
+
+    //     response.body = {
+    //       variables: variables
+    //     };
+    //     this.sendResponse(response);
+    //   }  catch (error) {
+    //     this.log(error.message, LOG_LEVEL.ERROR);
+    //     this.sendErrorResponse(response, 0, (<Error>error).message);
+    //   }
+    // }
 
   // Overrides.
   protected dispatchRequest(request: DebugProtocol.Request): void {
@@ -429,6 +482,8 @@ class EscargotDebugSession extends DebugSession {
   }
 
   private onClose(): void {
+    throw 5;
+    debugger;
     this.log('onClose', LOG_LEVEL.SESSION);
 
     this.sendEvent(new TerminatedEvent());
