@@ -24,6 +24,7 @@ import { DebugProtocol } from 'vscode-debugprotocol';
 import * as Fs from 'fs';
 import * as Path from 'path';
 import * as Util from 'util';
+// import * as vscode from 'vscode';
 import { IAttachRequestArguments, ILaunchRequestArguments, TemporaryBreakpoint } from './EscargotDebuggerInterfaces';
 import { EscargotDebuggerClient, EscargotDebuggerOptions } from './EscargotDebuggerClient';
 import {
@@ -43,6 +44,7 @@ class EscargotDebugSession extends DebugSession {
   private _debugLog: number = 0;
   private _debuggerClient: EscargotDebuggerClient;
   private _protocolhandler: EscargotDebugProtocolHandler;
+  // private _outputChannel: vscode.OutputChannel;
   private _variableHandles = new Handles<string>();
 
   public constructor() {
@@ -144,8 +146,11 @@ class EscargotDebugSession extends DebugSession {
       onBreakpointHit: (ref: EscargotMessageBreakpointHit, type: string) => this.onBreakpointHit(ref, type),
       onExceptionHit: (data: EscargotMessageExceptionHit) => this.onExceptionHit(data),
       onScriptParsed: (data: EscargotMessageScriptParsed) => this.onScriptParsed(data),
-      onError: (code: number, message: string) => this.onClose()
+      onError: (code: number, message: string) => this.onClose(),
+      onOutput: (message: string) => this.logOutput(message)
     };
+
+    // this._outputChannel = vscode.window.createOutputChannel("Escargot");
 
     this._protocolhandler = new EscargotDebugProtocolHandler(
       protocolDelegate, (message: any, level: number = LOG_LEVEL.VERBOSE) => this.log(message, level)
@@ -202,6 +207,22 @@ class EscargotDebugSession extends DebugSession {
         this.sendResponse(response);
       })
       .catch(error => this.sendErrorResponse(response, <Error>error));
+  }
+
+  protected stepOutRequest(response: DebugProtocol.StepOutResponse, args: DebugProtocol.StepOutArguments): void {
+    this._protocolhandler.stepOut()
+      .then(() => {
+        this.sendResponse(response);
+      })
+      .catch(error => this.sendErrorResponse(response, <Error>error));
+  }
+
+  protected pauseRequest(response: DebugProtocol.PauseResponse, args: DebugProtocol.PauseArguments): void {
+    this._protocolhandler.pause()
+    .then(() => {
+      this.sendResponse(response);
+    })
+    .catch(error => this.sendErrorResponse(response, <Error>error));
   }
 
   protected async setBreakPointsRequest(
@@ -532,6 +553,10 @@ class EscargotDebugSession extends DebugSession {
 
       this.sendEvent(new OutputEvent(`[${LOG_LEVEL[level]}] ${message}\n`, 'console'), true);
     }
+  }
+
+  private logOutput(message: any): void {
+    // this._outputChannel.appendLine(message);
   }
 }
 

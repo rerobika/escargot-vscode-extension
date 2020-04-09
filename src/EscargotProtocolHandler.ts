@@ -51,6 +51,7 @@ export interface EscargotDebugProtocolDelegate {
   onError?(code: number, message: string): void;
   onResume?(): void;
   onScriptParsed?(message: EscargotMessageScriptParsed): void;
+  onOutput?(message: string): void;
   onWaitForSource?(): void;
 }
 
@@ -104,6 +105,9 @@ export interface EscargotBacktraceResult {
   backtrace: Array<EscargotBacktraceFrame>;
 }
 
+interface StringReceivedCb {
+  (str: string): void;
+}
 
 
 interface LineFunctionMap {
@@ -165,11 +169,11 @@ export class EscargotDebugProtocolHandler {
   // first element is a dummy because lineLists is 1-indexed
   private lineLists: Array<LineFunctionMap> = [[]];
   private source: string = '';
-  private sourceData?: Uint8Array;
+  private stringBuffer: Uint8Array;
+  private stringReceiverMessage: number;
+  private stringReceivedCb: StringReceivedCb;
   private sourceName?: string;
-  private sourceNameData?: Uint8Array;
   private functionName?: string;
-  private functionNameData?: Uint8Array;
   private lines: Array<number> = [];
   private offsets: Array<ByteCodeOffset> = [];
   private isFunction: boolean = false;
@@ -212,20 +216,20 @@ export class EscargotDebugProtocolHandler {
       [SP.SERVER.ESCARGOT_DEBUGGER_PARSE_NODE]: this.onParseDone,
       [SP.SERVER.ESCARGOT_DEBUGGER_PARSE_ERROR]: this.onParseDone,
 
-      [SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_8BIT]: this.onSourceCode8,
-      [SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_8BIT_END]: this.onSourceCode8,
-      [SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_16BIT]: this.onSourceCode16,
-      [SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_16BIT_END]: this.onSourceCode16,
+      [SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_8BIT]: this.onSourceCode,
+      [SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_8BIT_END]: this.onSourceCode,
+      [SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_16BIT]: this.onSourceCode,
+      [SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_16BIT_END]: this.onSourceCode,
 
-      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT]: this.onFileName8,
-      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT_END]: this.onFileName8,
-      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_16BIT]: this.onFileName16,
-      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_16BIT_END]: this.onFileName16,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT]: this.onFileName,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT_END]: this.onFileName,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_16BIT]: this.onFileName,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_16BIT_END]: this.onFileName,
 
-      [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_8BIT]: this.onFunctionName8,
-      [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_8BIT_END]: this.onFunctionName8,
-      [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_16BIT]: this.onFunctionName16,
-      [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_16BIT_END]: this.onFunctionName16,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_8BIT]: this.onFunctionName,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_8BIT_END]: this.onFunctionName,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_16BIT]: this.onFunctionName,
+      [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_16BIT_END]: this.onFunctionName,
 
       [SP.SERVER.ESCARGOT_DEBUGGER_BREAKPOINT_LOCATION]: this.onBreakpointList,
       [SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_PTR]: this.onFunctionPtr,
@@ -255,6 +259,10 @@ export class EscargotDebugProtocolHandler {
       [SP.SERVER.ESCARGOT_DEBUGGER_VARIABLE_16BIT]: this.onScopeVariablesData,
       [SP.SERVER.ESCARGOT_DEBUGGER_VARIABLE_16BIT_END]: this.onScopeVariablesData,
 
+      [SP.SERVER.ESCARGOT_DEBUGGER_PRINT_8BIT]: this.onPrint,
+      [SP.SERVER.ESCARGOT_DEBUGGER_PRINT_8BIT_END]: this.onPrint,
+      [SP.SERVER.ESCARGOT_DEBUGGER_PRINT_16BIT]: this.onPrint,
+      [SP.SERVER.ESCARGOT_DEBUGGER_PRINT_16BIT_END]: this.onPrint,
     };
 
     this.scopeNameMap = {
@@ -272,7 +280,9 @@ export class EscargotDebugProtocolHandler {
     this.stopTypeMap = {
       [SP.CLIENT.ESCARGOT_DEBUGGER_NEXT]: 'step',
       [SP.CLIENT.ESCARGOT_DEBUGGER_STEP]: 'step-in',
+      [SP.CLIENT.ESCARGOT_DEBUGGER_FINISH]: 'step-out',
       [SP.CLIENT.ESCARGOT_DEBUGGER_CONTINUE]: 'continue',
+      [SP.CLIENT.ESCARGOT_DEBUGGER_STOP]: 'pause',
     };
     this.lastStopType = null;
   }
@@ -288,6 +298,19 @@ export class EscargotDebugProtocolHandler {
   }
 
   public stepInto(): Promise<any> {
+    return this.resumeExec(SP.CLIENT.ESCARGOT_DEBUGGER_STEP);
+  }
+
+  public stepOut(): Promise<any> {
+    return this.resumeExec(SP.CLIENT.ESCARGOT_DEBUGGER_FINISH);
+  }
+
+  public pause(): Promise<any> {
+    if (this.lastBreakpointHit) {
+      return Promise.reject(new Error('attempted pause while at breakpoint'));
+    }
+
+    this.lastStopType = SP.CLIENT.ESCARGOT_DEBUGGER_STOP;
     return this.resumeExec(SP.CLIENT.ESCARGOT_DEBUGGER_STEP);
   }
 
@@ -430,49 +453,50 @@ export class EscargotDebugProtocolHandler {
       this.lines.push(decoded[0]);
       this.offsets.push(decoded[1]);
     }
-    this.log("succ", 4);
   }
 
-  private addSource(): void {
-    this.source = createStringFromArray(this.sourceData);
-    this.log(this.source, 4);
+  public receiveString(data: Uint8Array): void {
+    const is8bit = (data[0] - this.stringReceiverMessage) > 1;
+    const isEnd = (data[0] & 0x01) == 1;
+
+    if (is8bit) {
+      this.stringBuffer = assembleUint8Arrays(this.stringBuffer, data);
+    } else {
+      this.stringBuffer = assembleUint8Arrays(this.stringBuffer, convert16bitTo8bit(this.byteConfig, data));
+    }
+
+    if (isEnd) {
+      const str = createStringFromArray(this.stringBuffer);
+      this.stringReceiverMessage = NaN;
+      this.stringBuffer = undefined;
+      this.stringReceivedCb(str);
+    }
+  }
+
+  private onSourceCodeEnd(str: string): void {
+    this.source = str;
+    this.functionName = 'global';
+    this.isFunction = false;
+  }
+
+  public onSourceCode(data: Uint8Array): void {
+    this.logPacket(`Source Code`, true);
+
+    if (this.evalsPending) {
+      return;
+    }
+
+    this.stringReceiverMessage = data[0];
+    this.stringReceivedCb = this.onSourceCodeEnd;
+    this.receiveString(data);
+  }
+
+  private onFileNameEnd (str: string): void {
+    this.sourceName = str;
     this.sources[this.nextScriptID] = {
       name: this.sourceName,
       source: this.source,
     };
-    this.sourceData = undefined;
-    this.functionName = 'global';
-  }
-
-  public onSourceCode16(data: Uint8Array): void {
-    this.logPacket(`Source Code 16bit`, true);
-    if (this.evalsPending) {
-      return;
-    }
-
-    this.sourceData = assembleUint8Arrays(this.sourceData, convert16bitTo8bit(this.byteConfig, data));
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_8BIT_END) {
-      this.addSource();
-    }
-  }
-
-  public onSourceCode8(data: Uint8Array): void {
-    this.logPacket(`Source Code 8bit`, true);
-
-    if (this.evalsPending) {
-      return;
-    }
-
-    this.isFunction = false;
-    this.sourceData = assembleUint8Arrays(this.sourceData, data);
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_8BIT_END) {
-      this.addSource();
-    }
-  }
-
-  private finalizeSourceCodeName (): void {
-    this.sourceName = createStringFromArray(this.sourceNameData);
-    this.sourceNameData = undefined;
 
     if (this.delegate.onScriptParsed) {
       this.delegate.onScriptParsed({
@@ -485,42 +509,25 @@ export class EscargotDebugProtocolHandler {
     this.nextScriptID++;
   }
 
-  public onFileName16(data: Uint8Array): void {
-    this.logPacket('FILE NAME Name 16');
-    this.sourceNameData = assembleUint8Arrays(this.sourceNameData, convert16bitTo8bit(this.byteConfig, data));
+  public onFileName(data: Uint8Array): void {
+    this.logPacket('File Name');
 
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_16BIT_END) {
-      this.finalizeSourceCodeName();
-    }
+    this.stringReceiverMessage = data[0];
+    this.stringReceivedCb = this.onFileNameEnd;
+    this.receiveString(data);
   }
 
-  public onFileName8(data: Uint8Array): void {
-    this.logPacket('Source Code Name 8');
-    this.sourceNameData = assembleUint8Arrays(this.sourceNameData, data);
-
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT_END) {
-      this.finalizeSourceCodeName();
-    }
+  private onFunctionNameEnd(str: string): void {
+    this.functionName = str;
+    this.isFunction = true;
   }
 
-  private onFunctionName16(data: Uint8Array): void {
-    this.logPacket('Function Name 16');
-    this.functionNameData = assembleUint8Arrays(this.functionNameData, convert16bitTo8bit(this.byteConfig, data));
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_16BIT_END) {
-      this.functionName = createStringFromArray(this.functionNameData);
-      this.functionNameData = undefined;
-      this.isFunction = true;
-    }
-  }
+  private onFunctionName(data: Uint8Array): void {
+    this.logPacket('Function Name');
 
-  private onFunctionName8(data: Uint8Array): void {
-    this.logPacket('Function Name 8');
-    this.functionNameData = assembleUint8Arrays(this.functionNameData, data);
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_FUNCTION_NAME_8BIT_END) {
-      this.functionName = createStringFromArray(this.functionNameData);
-      this.functionNameData = undefined;
-      this.isFunction = true;
-    }
+    this.stringReceiverMessage = data[0];
+    this.stringReceivedCb = this.onFunctionNameEnd;
+    this.receiveString(data);
   }
 
   public releaseFunction(functionPtr: Pointer): void {
@@ -757,6 +764,21 @@ export class EscargotDebugProtocolHandler {
     this.scopeVariables.push(this.currentScopeVariable);
   }
 
+  public onPrintEnd(str: string): void {
+    if (this.delegate.onOutput) {
+      this.delegate.onOutput(str);
+    }
+  }
+
+  public onPrint(data: Uint8Array): void {
+    this.logPacket('Print');
+
+    this.stringReceiverMessage = data[0];
+    this.stringReceivedCb = this.onPrintEnd;
+    this.receiveString(data);
+  }
+
+
   public onBacktraceTotal(data: Uint8Array): void {
     this.logPacket('Backtrace Total');
 
@@ -800,7 +822,11 @@ export class EscargotDebugProtocolHandler {
     }
 
     const request = this.currentRequest;
-    const handler = this.functionMap[message[0]];
+    let handler = this.functionMap[message[0]];
+
+    if (!isNaN(this.stringReceiverMessage)) {
+      handler = this.receiveString;
+    }
 
     if (handler) {
       const result = handler.call(this, message) || false;
