@@ -48,7 +48,7 @@
     "sinon": "^5.1.1",
     "tslint": "^5.15.0",
     "typescript": "^2.9.2",
-    "vscode": "^1.1.33"
+    "vscode": "^1.1.36"
   },
   "dependencies": {
     "@types/ncp": "^2.0.1",
