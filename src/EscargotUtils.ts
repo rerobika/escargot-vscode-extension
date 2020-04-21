@@ -199,6 +199,21 @@ export const createStringFromArray = (array: Uint8Array | undefined) => {
   return String.fromCharCode(...array);
 };
 
+export const createArrayFromString = (config: ByteConfig, str: string) => {
+  // let chars = Uint8Array.from(str, x => x.charCodeAt(0));
+  let chars = Uint8Array.from([...str].map(x => x.charCodeAt(0)));
+
+  if (!config.littleEndian) {
+    for (let i = 1; i < chars.length; i += 2) {
+      let tmp = chars[i];
+      chars[i] = chars[i + 1];
+      chars[i + 1] = tmp;
+    }
+  }
+
+  return chars;
+};
+
 /**
  * Convert a string to Uint8Array buffer in cesu8 format, with optional left padding
  *
@@ -268,14 +283,15 @@ export const assembleUint8Arrays = (baseArray: Uint8Array | undefined, nextArray
 
 export const convert16bitTo8bit = (config: ByteConfig, array: Uint8Array) => {
   if (config.littleEndian) {
-    return array;
+    return array.slice(1);
   }
 
-  let newArray = new Uint8Array (array.length);
+  let newArray = array.slice(1);
 
-  for (let i = 0; i < newArray.length; i += 2) {
+  for (let i = 1; i < newArray.length; i += 2) {
+    let tmp = newArray[i];
     newArray[i] = array[i + 1];
-    newArray[i + 1] = array[i];
+    newArray[i + 1] = tmp;
   }
 
   return newArray;

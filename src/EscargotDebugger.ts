@@ -368,6 +368,23 @@ class EscargotDebugSession extends DebugSession {
     }
   }
 
+  protected async evaluateRequest(
+    response: DebugProtocol.EvaluateResponse, args: DebugProtocol.EvaluateArguments
+  ): Promise<void> {
+    try {
+      const result: string = await this._protocolhandler.evaluate(args.expression, 0);
+
+      response.body = {
+        result,
+        variablesReference: 0
+      };
+
+      this.sendResponse(response);
+    } catch (error) {
+      this.sendErrorResponse(response, 0, (<Error>error).message);
+    }
+  }
+
   protected async scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments
     ): Promise<void> {
       try {
