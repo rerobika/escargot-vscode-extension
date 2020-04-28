@@ -28,7 +28,7 @@ import { IAttachRequestArguments, ILaunchRequestArguments, TemporaryBreakpoint }
 import { EscargotDebuggerClient, EscargotDebuggerOptions } from './EscargotDebuggerClient';
 import {
   EscargotDebugProtocolDelegate, EscargotDebugProtocolHandler, EscargotMessageScriptParsed,
-  EscargotMessageExceptionHit, EscargotMessageBreakpointHit, EscargotBacktraceResult, EscargotScopeChain, EscargotScopeVariable
+  EscargotMessageExceptionHit, EscargotMessageBreakpointHit, EscargotBacktraceResult, EscargotScopeChain, EscargotScopeVariable,
 } from './EscargotProtocolHandler';
 import { Breakpoint } from './EscargotBreakpoints';
 import { LOG_LEVEL } from './EscargotDebuggerConstants';
@@ -349,7 +349,7 @@ class EscargotDebugSession extends DebugSession {
       const backtraceData: EscargotBacktraceResult = await this._protocolhandler.requestBacktrace(args.startFrame,
                                                                                                   args.levels);
       const stk = backtraceData.backtrace.map((f, i) => new StackFrame(
-        1000 + i,
+        f.id,
         f.function.name,
         this.pathToSource(`${currentArgs.localRoot}/${this.pathToBasename(f.function.sourceName)}`),
         f.line,
@@ -388,6 +388,8 @@ class EscargotDebugSession extends DebugSession {
   protected async scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments
     ): Promise<void> {
       try {
+        const btDepth = this._protocolhandler.resolveTraceFrameDepthByID(args.frameId);
+        this.log(btDepth, LOG_LEVEL.ERROR);
         const scopesArray: Array<EscargotScopeChain> = await this._protocolhandler.requestScopes();
         const scopes = new Array<Scope>();
 

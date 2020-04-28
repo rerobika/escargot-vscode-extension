@@ -94,6 +94,7 @@ export interface EscargotBacktraceFrame {
   function: ParsedFunction;
   line: number;
   column: number;
+  id: number;
 }
 
 interface ScopeNameMap {
@@ -186,6 +187,9 @@ export class EscargotDebugProtocolHandler {
   private newFunctions: FunctionMap = {};
   private scopeMessage?: Array<number> = [];
   private backtraceData: EscargotBacktraceResult = {totalFrames : 0, backtrace: []};
+  private backtraceFrames: Map<number, number>;
+  private backtraceFrameID: number = 0;
+  private variableReferenceID: number = 0;
 
   private maxMessageSize: number = 0;
   private nextScriptID: number = 1;
@@ -207,6 +211,7 @@ export class EscargotDebugProtocolHandler {
   constructor(delegate: EscargotDebugProtocolDelegate, log?: LoggerFunction) {
     this.delegate = delegate;
     this.log = log || <any>(() => {});
+    this.backtraceFrames = new Map<number, number>();
 
     this.byteConfig = {
       pointerSize: 0,
@@ -253,7 +258,7 @@ export class EscargotDebugProtocolHandler {
 
       [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_TOTAL]: this.onBacktraceTotal,
       [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE]: this.onBacktrace,
-      [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_END]: this.onBacktrace,
+      [SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_END]: this.onBacktraceEnd,
 
       [SP.SERVER.ESCARGOT_DEBUGGER_SCOPE_CHAIN]: this.onScopeChain,
       [SP.SERVER.ESCARGOT_DEBUGGER_SCOPE_CHAIN_END]: this.onScopeChainEnd,
@@ -676,7 +681,7 @@ export class EscargotDebugProtocolHandler {
       }
 
       scopes.push({name: this.scopeNameMap[this.scopeMessage[i]],
-                   variablesReference: i,
+                   variablesReference: this.variableReferenceID++,
                    expensive: true});
     }
     this.scopeMessage = [];
@@ -829,26 +834,38 @@ export class EscargotDebugProtocolHandler {
     this.backtraceData.backtrace = [];
   }
 
-  public onBacktrace(data: Uint8Array): EscargotBacktraceResult {
-    this.logPacket('Backtrace 8');
-
-    for (let i = 1; i < data.byteLength; i += this.byteConfig.pointerSize + 8) {
+  private decodeBackTraceFrame(data: Uint8Array) : void {
+    for (let i = 1;  i < data.byteLength; i += this.byteConfig.pointerSize + 8) {
       const backtraceData = this.decodeMessage('CII', data, i);
       let frame = <EscargotBacktraceFrame>{
         function: this.functions[backtraceData[0]],
         line: backtraceData[1],
-        column: backtraceData[2]
+        column: backtraceData[2],
+        id: this.backtraceFrameID++,
       }
       this.backtraceData.backtrace.push(frame);
+      this.backtraceFrames.set(frame.id, this.backtraceData.totalFrames - this.backtraceData.backtrace.length);
     }
+  }
 
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_BACKTRACE_END) {
-      if (this.delegate.onBacktrace) {
-        this.delegate.onBacktrace(this.backtraceData);
-      }
+  public resolveTraceFrameDepthByID(id: number) : number {
+    return this.backtraceFrames.get(id);
+  }
+
+  public onBacktraceEnd(data: Uint8Array): EscargotBacktraceResult {
+    this.logPacket('Backtrace End');
+    this.decodeBackTraceFrame(data);
+
+    if (this.delegate.onBacktrace) {
+      this.delegate.onBacktrace(this.backtraceData);
     }
 
     return this.backtraceData;
+  }
+
+  public onBacktrace(data: Uint8Array): void {
+    this.logPacket('Backtrace');
+    this.decodeBackTraceFrame(data);
   }
 
   public onEvalFailedEnd(str: string): string {
@@ -1026,9 +1043,7 @@ export class EscargotDebugProtocolHandler {
 
     let maxFragment = Math.min(this.maxMessageSize - messageHeader, size);
 
-    let message = encodeMessage(this.byteConfig, "BBI", [maxFragment + messageHeader,
-                                                         messageType,
-                                                         size]);
+    let message = encodeMessage(this.byteConfig, "BI", [messageType, size]);
 
     if (size == maxFragment)
     {
@@ -1045,8 +1060,7 @@ export class EscargotDebugProtocolHandler {
     while (offset < size) {
       let nextFragment = Math.min(maxFragment, size - offset);
 
-      message = encodeMessage(this.byteConfig, "BB", [maxFragment + messageHeader,
-                                                      messageType]);
+      message = encodeMessage(this.byteConfig, "BB", [messageType]);
 
       let prevOffset = offset;
       offset += nextFragment;
@@ -1064,7 +1078,7 @@ export class EscargotDebugProtocolHandler {
 
     this.evalsPending++;
 
-    return this.sendString(SP.CLIENT.ESCARGOT_DEBUGGER_EVAL_8BIT, expression)
+    return this.sendString(SP.CLIENT.ESCARGOT_DEBUGGER_EVAL_8BIT_START, expression)
   }
 
   public requestScopes(): Promise<any> {
