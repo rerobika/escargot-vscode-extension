@@ -18,8 +18,8 @@
 import * as SP from './EscargotProtocolConstants';
 import { Breakpoint, ParsedFunction } from './EscargotBreakpoints';
 import {
-  ByteConfig, createStringFromArray, assembleUint8Arrays, convert16bitTo8bit,
-  decodeMessage, encodeMessage, createArrayFromString
+  ByteConfig, createStringFromArray, assembleUint8Arrays,
+  decodeMessage, encodeMessage, createArrayFromString, assembleUint16Arrays
 } from './EscargotUtils';
 import { EscargotDebuggerClient } from './EscargotDebuggerClient';
 import { LOG_LEVEL } from './EscargotDebuggerConstants';
@@ -176,6 +176,7 @@ export class EscargotDebugProtocolHandler {
   private lineLists: Array<LineFunctionMap> = [[]];
   private source: string = '';
   private stringBuffer: Uint8Array;
+  private stringBuffer16: Uint16Array;
   private stringReceiverMessage: number;
   private stringReceivedCb: StringReceivedCb;
   private sourceName?: string;
@@ -392,9 +393,9 @@ export class EscargotDebugProtocolHandler {
 
   public onFunctionPtr(data: Uint8Array): void {
     this.logPacket('Function Ptr', true);
-    if (this.evalsPending) {
-      return;
-    }
+    // if (this.evalsPending) {
+    //   return;
+    // }
 
 
     const decoded = this.decodeMessage('CII', data, 1);
@@ -435,21 +436,20 @@ export class EscargotDebugProtocolHandler {
     this.lineLists.push(lineList);
     this.lines = [];
     this.offsets = [];
-    this.nextScriptID++;
+    // this.nextScriptID++;
     this.newFunctions = {};
   }
 
   private onParseDone(data: Uint8Array): void {
     this.logPacket('Parse Function');
-    return;
   }
 
   public onBreakpointList(data: Uint8Array): void {
     this.logPacket('Breakpoint List', true);
 
-    if (this.evalsPending) {
-      return;
-    }
+    // if (this.evalsPending) {
+    //   return;
+    // }
 
     if (data.byteLength % 8 !== 1 || data.byteLength < 1 + 8) {
       throw new Error('unexpected breakpoint list message length');
@@ -463,25 +463,27 @@ export class EscargotDebugProtocolHandler {
     }
   }
 
-  public receiveString(data: Uint8Array): void {
+  public receiveString(data: Uint8Array): any {
     const is8bit = (data[0] - this.stringReceiverMessage) < 2;
     const isEnd = ((data[0] - this.stringReceiverMessage) & 0x01) == 1;
 
     if (is8bit) {
       this.stringBuffer = assembleUint8Arrays(this.stringBuffer, data);
     } else {
-      this.stringBuffer = assembleUint8Arrays(this.stringBuffer, convert16bitTo8bit(this.byteConfig, data));
+      this.stringBuffer16 = assembleUint16Arrays(this.byteConfig, this.stringBuffer16, data);
+      this.logPacket(createStringFromArray(this.stringBuffer16));
     }
 
     if (isEnd) {
-      const str = createStringFromArray(this.stringBuffer);
+      const str = createStringFromArray(is8bit ? this.stringBuffer : this.stringBuffer16);
       this.stringReceiverMessage = NaN;
       this.stringBuffer = undefined;
       const currentStringReceiveCb = this.stringReceivedCb;
-      this.stringReceivedCb(str);
+      const result = this.stringReceivedCb(str);
       if (currentStringReceiveCb == this.stringReceivedCb) {
         this.stringReceivedCb = null;
       }
+      return result;
     }
   }
 
@@ -494,9 +496,9 @@ export class EscargotDebugProtocolHandler {
   public onSourceCode(data: Uint8Array): void {
     this.logPacket(`Source Code`, true);
 
-    if (this.evalsPending) {
-      return;
-    }
+    // if (this.evalsPending) {
+    //   return;
+    // }
 
     this.stringReceiverMessage = SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_8BIT;
     this.stringReceivedCb = this.onSourceCodeEnd;
@@ -504,6 +506,10 @@ export class EscargotDebugProtocolHandler {
   }
 
   private onFileNameEnd (str: string): void {
+    if (str === 'eval input') {
+      str = 'eval_' + this.nextScriptID + '.js';
+    }
+
     this.sourceName = str;
     this.sources[this.nextScriptID] = {
       name: this.sourceName,
@@ -522,7 +528,11 @@ export class EscargotDebugProtocolHandler {
   }
 
   public onFileName(data: Uint8Array): void {
-    this.logPacket('File Name');
+    this.logPacket('File Name', true);
+
+    // if (this.evalsPending) {
+    //   return;
+    // }
 
     this.stringReceiverMessage = SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT;
     this.stringReceivedCb = this.onFileNameEnd;
@@ -882,7 +892,7 @@ export class EscargotDebugProtocolHandler {
 
     this.stringReceiverMessage = SP.SERVER.ESCARGOT_DEBUGGER_EVAL_FAILED_8BIT;
     this.stringReceivedCb = this.onEvalFailedEnd;
-    this.receiveString(data);
+    return this.receiveString(data);
   }
 
   public onEvalResultEnd(str: string): string {
@@ -899,7 +909,7 @@ export class EscargotDebugProtocolHandler {
 
     this.stringReceiverMessage = SP.SERVER.ESCARGOT_DEBUGGER_EVAL_RESULT_8BIT;
     this.stringReceivedCb = this.onEvalResultEnd;
-    this.receiveString(data);
+    return this.receiveString(data);
   }
 
   public onMessage(message: Uint8Array): void {
@@ -1060,7 +1070,7 @@ export class EscargotDebugProtocolHandler {
     while (offset < size) {
       let nextFragment = Math.min(maxFragment, size - offset);
 
-      message = encodeMessage(this.byteConfig, "BB", [messageType]);
+      message = encodeMessage(this.byteConfig, "B", [messageType]);
 
       let prevOffset = offset;
       offset += nextFragment;

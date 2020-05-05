@@ -191,7 +191,7 @@ export const encodeMessage = (config: ByteConfig, format: string, values: Array<
   return message;
 };
 
-export const createStringFromArray = (array: Uint8Array | undefined) => {
+export const createStringFromArray = (array: Uint8Array | Uint16Array | undefined) => {
   if (!array) {
     return '';
   }
@@ -281,18 +281,32 @@ export const assembleUint8Arrays = (baseArray: Uint8Array | undefined, nextArray
   return result;
 };
 
-export const convert16bitTo8bit = (config: ByteConfig, array: Uint8Array) => {
-  if (config.littleEndian) {
-    return array.slice(1);
+// Concat the two arrays. The first byte (opcode) of nextArray is ignored.
+export const assembleUint16Arrays = (config: ByteConfig, baseArray: Uint16Array | undefined, nextArray: Uint8Array) => {
+  if (!config.littleEndian) {
+    for (let i = 1; i < nextArray.length; i += 2) {
+      let tmp = nextArray[i];
+      nextArray[i] = nextArray[i + 1];
+      nextArray[i + 1] = tmp;
+    }
   }
 
-  let newArray = array.slice(1);
+  let u16Array = new Uint16Array(nextArray.slice(1).buffer);
 
-  for (let i = 1; i < newArray.length; i += 2) {
-    let tmp = newArray[i];
-    newArray[i] = array[i + 1];
-    newArray[i + 1] = tmp;
+  if (!baseArray) {
+    return u16Array;
   }
 
-  return newArray;
+  if (nextArray.byteLength <= 1) {
+    return baseArray;
+  }
+
+  const baseLength = baseArray.length;
+  const u16ArrayLength = u16Array.length;
+
+  const result = new Uint16Array(baseLength + u16ArrayLength);
+  result.set(u16Array, baseLength);
+  result.set(baseArray);
+
+  return result;
 };
