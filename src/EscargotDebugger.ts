@@ -28,7 +28,7 @@ import { IAttachRequestArguments, ILaunchRequestArguments, TemporaryBreakpoint }
 import { EscargotDebuggerClient, EscargotDebuggerOptions } from './EscargotDebuggerClient';
 import {
   EscargotDebugProtocolDelegate, EscargotDebugProtocolHandler, EscargotMessageScriptParsed,
-  EscargotMessageExceptionHit, EscargotMessageBreakpointHit, EscargotBacktraceResult, EscargotScopeChain, EscargotScopeVariable,
+  EscargotMessageBreakpointHit, EscargotBacktraceResult, EscargotScopeChain, EscargotScopeVariable,
 } from './EscargotProtocolHandler';
 import { Breakpoint } from './EscargotBreakpoints';
 import { LOG_LEVEL } from './EscargotDebuggerConstants';
@@ -142,7 +142,7 @@ class EscargotDebugSession extends DebugSession {
                                args: ILaunchRequestArguments | IAttachRequestArguments): void {
     const protocolDelegate = <EscargotDebugProtocolDelegate>{
       onBreakpointHit: (ref: EscargotMessageBreakpointHit, type: string) => this.onBreakpointHit(ref, type),
-      onExceptionHit: (data: EscargotMessageExceptionHit) => this.onExceptionHit(data),
+      onExceptionHit: (data: string) => this.onExceptionHit(data),
       onScriptParsed: (data: EscargotMessageScriptParsed) => this.onScriptParsed(data),
       onError: (code: number, message: string) => this.onClose(),
       onOutput: (message: string) => this.logOutput(message)
@@ -503,10 +503,10 @@ class EscargotDebugSession extends DebugSession {
     this.sendEvent(new StoppedEvent(stopType, EscargotDebugSession.THREAD_ID));
   }
 
-  private onExceptionHit(data: EscargotMessageExceptionHit): void {
+  private onExceptionHit(data: string): void {
     this.log('onExceptionHit', LOG_LEVEL.SESSION);
 
-    this.sendEvent(new StoppedEvent('exception', EscargotDebugSession.THREAD_ID, data.message));
+    this.sendEvent(new StoppedEvent('exception', EscargotDebugSession.THREAD_ID, data));
   }
 
   private onScriptParsed(data: EscargotMessageScriptParsed): void {

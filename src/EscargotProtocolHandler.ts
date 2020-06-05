@@ -46,7 +46,7 @@ export interface ParserFrame {
 export interface EscargotDebugProtocolDelegate {
   onBacktrace?(backtrace: EscargotBacktraceResult): void;
   onBreakpointHit?(message: EscargotMessageBreakpointHit, stopType: string): void;
-  onExceptionHit?(message: EscargotMessageExceptionHit): void;
+  onExceptionHit?(message: string): void;
   onEvalResult?(result: string): void;
   onError?(code: number, message: string): void;
   onResume?(): void;
@@ -69,12 +69,6 @@ export interface EscargotMessageScriptParsed {
 export interface EscargotMessageBreakpointHit {
   breakpoint: Breakpoint;
   exact: boolean;
-}
-
-export interface EscargotMessageExceptionHit {
-  breakpoint: Breakpoint;
-  exact: boolean;
-  message: string;
 }
 
 export interface EscargotEvalResult {
@@ -194,7 +188,6 @@ export class EscargotDebugProtocolHandler {
 
   private maxMessageSize: number = 0;
   private nextScriptID: number = 1;
-  private exceptionString?: string;
   private evalsPending: number = 0;
   private lastBreakpointHit?: Breakpoint;
   private lastBreakpointExact: boolean = true;
@@ -623,11 +616,8 @@ export class EscargotDebugProtocolHandler {
   }
 
   public onBreakpointHit(data: Uint8Array): void {
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_BREAKPOINT_HIT) {
-      this.logPacket('Breakpoint Hit');
-    } else {
-      this.logPacket('Exception Hit');
-    }
+    this.logPacket('Breakpoint Hit');
+
     const breakpointData = this.decodeMessage('CI', data, 1);
     const breakpointRef = this.getBreakpoint(breakpointData);
     const breakpoint = breakpointRef.breakpoint;
@@ -642,23 +632,6 @@ export class EscargotDebugProtocolHandler {
 
     const atAround = breakpointRef.exact ? 'at' : 'around';
     this.log(`Stopped ${atAround} ${breakpointInfo}${breakpoint}`, LOG_LEVEL.PROTOCOL);
-
-    if (data[0] === SP.SERVER.ESCARGOT_DEBUGGER_EXCEPTION_HIT) {
-      this.log('Exception throw detected', LOG_LEVEL.ERROR);
-      if (this.exceptionString) {
-        this.log(`Exception hint: ${this.exceptionString}`, LOG_LEVEL.ERROR);
-      }
-
-      if (this.delegate.onExceptionHit) {
-        this.delegate.onExceptionHit({
-          'breakpoint': breakpoint,
-          'exact': breakpointRef.exact,
-          'message': this.exceptionString,
-        });
-        this.exceptionString = undefined;
-        return;
-      }
-    }
 
     if (this.delegate.onBreakpointHit) {
       const stopTypeText = this.stopTypeMap[this.lastStopType] || 'entry';
@@ -815,6 +788,13 @@ export class EscargotDebugProtocolHandler {
   public onExceptionEnd(str: string): void {
     if (this.delegate.onOutput) {
       this.delegate.onOutput(`Exception: ${str}`);
+    }
+
+    this.log('Exception throw detected', LOG_LEVEL.ERROR);
+    this.log(`Exception hint: ${str}`, LOG_LEVEL.ERROR);
+
+    if (this.delegate.onExceptionHit) {
+      this.delegate.onExceptionHit(str);
     }
   }
 
