@@ -48,6 +48,6 @@ export const activate = (context: vscode.ExtensionContext) => {
     );
   };
 
-  export const deactivate = () => {
+export const deactivate = () => {
   // Nothing to do.
 };

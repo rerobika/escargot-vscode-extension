@@ -88,6 +88,7 @@ export interface EscargotBacktraceFrame {
   function: ParsedFunction;
   line: number;
   column: number;
+  depth: number;
   id: number;
 }
 
@@ -194,7 +195,7 @@ export class EscargotDebugProtocolHandler {
   private activeBreakpoints: Array<Breakpoint> = [];
   private nextBreakpointIndex: number = 0;
   private scopeVariables: Array<EscargotScopeVariable> = [];
-  private currentScopeVariable: EscargotScopeVariable
+  private currentScopeVariable: EscargotScopeVariable;
 
   private log: LoggerFunction;
   private requestQueue: PendingRequest[];
@@ -274,7 +275,7 @@ export class EscargotDebugProtocolHandler {
       [SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_OBJECT]: "Object Environment",
       [SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_MODULE]: "Module Environment",
       [SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_UNKNOWN]: "Unknown Environment",
-    }
+    };
 
     this.requestQueue = [];
     this.currentRequest = null;
@@ -644,6 +645,7 @@ export class EscargotDebugProtocolHandler {
 
   public onScopeChain(data: Uint8Array): void {
     this.logPacket('ScopeChain');
+    this.logPacket('' + data.byteLength);
 
     for (let i = 1; i < data.byteLength; i++) {
       this.scopeMessage.push(data[i]);
@@ -708,15 +710,12 @@ export class EscargotDebugProtocolHandler {
 
     let variableType = this.currentScopeVariable.fullType & 0x3f;
 
-    if (this.scopeVariables.length >= 34) {
-      this.logPacket('5');
-    }
-
     switch (variableType) {
       case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_END: {
         let scopeVariables = [];
         Object.assign (scopeVariables, this.scopeVariables);
         this.scopeVariables = [];
+        this.logPacket('' + JSON.stringify(scopeVariables));
         return scopeVariables;
       }
       case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_UNACCESSIBLE: {
@@ -825,14 +824,15 @@ export class EscargotDebugProtocolHandler {
   }
 
   private decodeBackTraceFrame(data: Uint8Array) : void {
-    for (let i = 1;  i < data.byteLength; i += this.byteConfig.pointerSize + 8) {
-      const backtraceData = this.decodeMessage('CII', data, i);
+    for (let i = 1;  i < data.byteLength; i += this.byteConfig.pointerSize + 12) {
+      const backtraceData = this.decodeMessage('CIII', data, i);
       let frame = <EscargotBacktraceFrame>{
         function: this.functions[backtraceData[0]],
         line: backtraceData[1],
         column: backtraceData[2],
+        depth: backtraceData[3],
         id: this.backtraceFrameID++,
-      }
+      };
       this.backtraceData.backtrace.push(frame);
       this.backtraceFrames.set(frame.id, this.backtraceData.totalFrames - this.backtraceData.backtrace.length);
     }
