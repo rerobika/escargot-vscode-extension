@@ -18,7 +18,7 @@
 
 import {
   DebugSession, InitializedEvent, OutputEvent, Thread, Source,
-  StoppedEvent, StackFrame, TerminatedEvent, ErrorDestination, Scope, Handles
+  StoppedEvent, StackFrame, TerminatedEvent, ErrorDestination, Scope,
 } from 'vscode-debugadapter';
 import { DebugProtocol } from 'vscode-debugprotocol';
 import * as Fs from 'fs';
@@ -43,7 +43,6 @@ class EscargotDebugSession extends DebugSession {
   private _debugLog: number = 0;
   private _debuggerClient: EscargotDebuggerClient;
   private _protocolhandler: EscargotDebugProtocolHandler;
-  private _variableHandles = new Handles<string>();
 
   public constructor() {
     super();
@@ -388,15 +387,16 @@ class EscargotDebugSession extends DebugSession {
   protected async scopesRequest(response: DebugProtocol.ScopesResponse, args: DebugProtocol.ScopesArguments
     ): Promise<void> {
       try {
-        const btDepth = this._protocolhandler.resolveTraceFrameDepthByID(args.frameId);
+        const btDepth = this._protocolhandler.resolveBacktraceFrameDepthByID(args.frameId);
         this.log(btDepth, LOG_LEVEL.ERROR);
-        const scopesArray: Array<EscargotScopeChain> = await this._protocolhandler.requestScopes();
+        const scopesArray: Array<EscargotScopeChain> = await this._protocolhandler.requestScopes(btDepth);
         const scopes = new Array<Scope>();
 
         for (const scope of scopesArray) {
+          this._protocolhandler.setScopeChainElementState(scope.scopeID, btDepth);
           scopes.push(new Scope(scope.name,
-                                this._variableHandles.create(scope.variablesReference.toString()),
-                                scope.expensive));
+                                scope.scopeID,
+                                true));
         }
 
         response.body = {
@@ -415,15 +415,26 @@ class EscargotDebugSession extends DebugSession {
     ): Promise<void> {
       try {
         const variables = new Array<DebugProtocol.Variable>();
-        const id = this._variableHandles.get(args.variablesReference);
-        const scopeVariables: Array<EscargotScopeVariable> = await this._protocolhandler.requestVariables(Number(id));
+        let scopeVariables: Array<EscargotScopeVariable>;
+        const {scopeIndex, stateIndex} = this._protocolhandler.resolveScopeChainElementByID(args.variablesReference);
+
+        if (stateIndex == -1) {
+          scopeVariables = await this._protocolhandler.requestObjectVariables(scopeIndex);
+        } else {
+          scopeVariables = await this._protocolhandler.requestScopeVariables(stateIndex, scopeIndex);
+        }
 
         for (const variable of scopeVariables) {
+          let variablesReference = 0;
+          if (variable.objectIndex != -1) {
+            variablesReference = this._protocolhandler.addScopeVariableObject(variable.objectIndex);
+          }
+
           variables.push({name: variable.name,
                           evaluateName: variable.name,
                           type: variable.type,
                           value: variable.value,
-                          variablesReference: 0});
+                          variablesReference});
         }
 
         response.body = {

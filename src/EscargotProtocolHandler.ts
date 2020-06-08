@@ -101,10 +101,9 @@ export interface EscargotBacktraceResult {
   backtrace: Array<EscargotBacktraceFrame>;
 }
 
-interface StringReceivedCb {
-  (str: string): any;
+interface StringReceiverCb {
+  (data: string): any;
 }
-
 
 interface LineFunctionMap {
   // maps line number to an array of functions
@@ -142,8 +141,12 @@ export interface EscargotEvalResult {
 
 export interface EscargotScopeChain {
   name: string;
-  variablesReference: number;
-  expensive: boolean;
+  scopeID: number;
+}
+
+export interface EscargotScopeChainElement {
+  scopeIndex: number;
+  stateIndex?: number;
 }
 
 export interface EscargotScopeVariable {
@@ -152,6 +155,7 @@ export interface EscargotScopeVariable {
   value: string;
   fullType: number;
   hasValue: boolean;
+  objectIndex: number;
 }
 
 // abstracts away the details of the protocol
@@ -173,7 +177,7 @@ export class EscargotDebugProtocolHandler {
   private stringBuffer: Uint8Array;
   private stringBuffer16: Uint16Array;
   private stringReceiverMessage: number;
-  private stringReceivedCb: StringReceivedCb;
+  private stringReceivedCb: StringReceiverCb;
   private sourceName?: string;
   private functionName?: string;
   private lines: Array<number> = [];
@@ -181,11 +185,11 @@ export class EscargotDebugProtocolHandler {
   private isFunction: boolean = false;
   private functions: FunctionMap = {};
   private newFunctions: FunctionMap = {};
-  private scopeMessage?: Array<number> = [];
   private backtraceData: EscargotBacktraceResult = {totalFrames : 0, backtrace: []};
   private backtraceFrames: Map<number, number>;
+  private scopeList: Map<number, EscargotScopeChainElement>;
   private backtraceFrameID: number = 0;
-  private variableReferenceID: number = 0;
+  private scopeID: number = 1000;
 
   private maxMessageSize: number = 0;
   private nextScriptID: number = 1;
@@ -196,6 +200,7 @@ export class EscargotDebugProtocolHandler {
   private nextBreakpointIndex: number = 0;
   private scopeVariables: Array<EscargotScopeVariable> = [];
   private currentScopeVariable: EscargotScopeVariable;
+  private currentScopeChain: Array<EscargotScopeChain> = [];
 
   private log: LoggerFunction;
   private requestQueue: PendingRequest[];
@@ -207,6 +212,7 @@ export class EscargotDebugProtocolHandler {
     this.delegate = delegate;
     this.log = log || <any>(() => {});
     this.backtraceFrames = new Map<number, number>();
+    this.scopeList = new Map<number, EscargotScopeChainElement>();
 
     this.byteConfig = {
       pointerSize: 0,
@@ -465,13 +471,13 @@ export class EscargotDebugProtocolHandler {
       this.stringBuffer = assembleUint8Arrays(this.stringBuffer, data);
     } else {
       this.stringBuffer16 = assembleUint16Arrays(this.byteConfig, this.stringBuffer16, data);
-      this.logPacket(createStringFromArray(this.stringBuffer16));
     }
 
     if (isEnd) {
       const str = createStringFromArray(is8bit ? this.stringBuffer : this.stringBuffer16);
       this.stringReceiverMessage = NaN;
       this.stringBuffer = undefined;
+      this.stringBuffer16 = undefined;
       const currentStringReceiveCb = this.stringReceivedCb;
       const result = this.stringReceivedCb(str);
       if (currentStringReceiveCb == this.stringReceivedCb) {
@@ -643,35 +649,32 @@ export class EscargotDebugProtocolHandler {
     this.lastStopType = null;
   }
 
+  public processScopeChainElement(data: Uint8Array): void {
+    for (let i = 1; i < data.byteLength; i++) {
+      if (data[i] > SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_UNKNOWN) {
+        throw new Error('Invalid scope chain type!');
+      }
+
+      this.scopeList.set(this.scopeID, { scopeIndex : i - 1 });
+      this.currentScopeChain.push({name: this.scopeNameMap[data[i]],
+                                   scopeID: this.scopeID++});
+    }
+  }
+
   public onScopeChain(data: Uint8Array): void {
     this.logPacket('ScopeChain');
-    this.logPacket('' + data.byteLength);
 
-    for (let i = 1; i < data.byteLength; i++) {
-      this.scopeMessage.push(data[i]);
-    }
+    this.processScopeChainElement(data);
   }
 
   public onScopeChainEnd(data: Uint8Array): Array<EscargotScopeChain> {
     this.logPacket('ScopeChainEnd');
 
-    for (let i = 1; i < data.byteLength; i++) {
-      this.scopeMessage.push(data[i]);
-    }
+    this.processScopeChainElement(data);
+    const scopeChain = this.currentScopeChain;
+    this.currentScopeChain = [];
 
-    const scopes: Array<EscargotScopeChain> = [];
-    for (let i = 0; i < this.scopeMessage.length; i++) {
-       if (this.scopeMessage[i] > SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_UNKNOWN) {
-        throw new Error('Invalid scope chain type!');
-      }
-
-      scopes.push({name: this.scopeNameMap[this.scopeMessage[i]],
-                   variablesReference: this.variableReferenceID++,
-                   expensive: true});
-    }
-    this.scopeMessage = [];
-
-    return scopes;
+    return scopeChain;
   }
 
   public onScopeVariableValue(str: string) {
@@ -693,10 +696,9 @@ export class EscargotDebugProtocolHandler {
 
     if (!this.currentScopeVariable.hasValue) {
       this.scopeVariables.push(this.currentScopeVariable);
-      return;
+    } else {
+      this.stringReceivedCb = this.onScopeVariableValue;
     }
-
-    this.stringReceivedCb = this.onScopeVariableValue;
   }
 
   public onScopeVariable(data: Uint8Array): any {
@@ -706,16 +708,15 @@ export class EscargotDebugProtocolHandler {
                                  type: '',
                                  value: '',
                                  fullType: data[1],
-                                 hasValue: false};
+                                 hasValue: false,
+                                 objectIndex: -1};
 
     let variableType = this.currentScopeVariable.fullType & 0x3f;
 
     switch (variableType) {
       case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_END: {
-        let scopeVariables = [];
-        Object.assign (scopeVariables, this.scopeVariables);
+        let scopeVariables = this.scopeVariables;
         this.scopeVariables = [];
-        this.logPacket('' + JSON.stringify(scopeVariables));
         return scopeVariables;
       }
       case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_UNACCESSIBLE: {
@@ -755,14 +756,17 @@ export class EscargotDebugProtocolHandler {
       }
       case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_OBJECT: {
         this.currentScopeVariable.type = "object";
+        this.currentScopeVariable.objectIndex = this.decodeMessage("I", data, 2)[0];
         break;
       }
       case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_ARRAY: {
         this.currentScopeVariable.type = "array";
+        this.currentScopeVariable.objectIndex = this.decodeMessage("I", data, 2)[0];
         break;
       }
       case SP.ESCARGOT_DEBUGGER_SCOPE_VARIABLES.ESCARGOT_DEBUGGER_VARIABLE_FUNCTION: {
         this.currentScopeVariable.type = "function";
+        this.currentScopeVariable.objectIndex = this.decodeMessage("I", data, 2)[0];
         break;
       }
       default: {
@@ -830,16 +834,29 @@ export class EscargotDebugProtocolHandler {
         function: this.functions[backtraceData[0]],
         line: backtraceData[1],
         column: backtraceData[2],
-        depth: backtraceData[3],
         id: this.backtraceFrameID++,
       };
       this.backtraceData.backtrace.push(frame);
-      this.backtraceFrames.set(frame.id, this.backtraceData.totalFrames - this.backtraceData.backtrace.length);
+      this.backtraceFrames.set(frame.id, backtraceData[3]);
     }
   }
 
-  public resolveTraceFrameDepthByID(id: number) : number {
+  public resolveBacktraceFrameDepthByID(id: number) : number {
     return this.backtraceFrames.get(id);
+  }
+
+  public resolveScopeChainElementByID(id: number) : EscargotScopeChainElement {
+    return this.scopeList.get(id);
+  }
+
+  public addScopeVariableObject(objectID: number) : number {
+    let id = this.scopeID++;
+    this.scopeList.set(id, {stateIndex: -1, scopeIndex: objectID});
+    return id;
+  }
+
+  public setScopeChainElementState(id: number, stateIndex:number) {
+    return this.scopeList.get(id).stateIndex = stateIndex;
   }
 
   public onBacktraceEnd(data: Uint8Array): EscargotBacktraceResult {
@@ -1071,23 +1088,36 @@ export class EscargotDebugProtocolHandler {
     return this.sendString(SP.CLIENT.ESCARGOT_DEBUGGER_EVAL_8BIT_START, expression)
   }
 
-  public requestScopes(): Promise<any> {
+  public requestScopes(depth: number): Promise<any> {
     if (!this.lastBreakpointHit) {
       return Promise.reject(new Error('scope chain not allowed while app running'));
     }
 
-    return this.sendRequest(encodeMessage(this.byteConfig, 'B',
-                                          [SP.CLIENT.ESCARGOT_DEBUGGER_GET_SCOPE_CHAIN]));
+    return this.sendRequest(encodeMessage(this.byteConfig, 'BI',
+                                          [SP.CLIENT.ESCARGOT_DEBUGGER_GET_SCOPE_CHAIN,
+                                           depth]));
   }
 
-  public requestVariables(level?: number): Promise<any> {
+  public requestScopeVariables(stateIndex: number, scopeIndex: number): Promise<any> {
+    if (!this.lastBreakpointHit) {
+      return Promise.reject(new Error('scope variables not allowed while app running'));
+    }
+
+    return this.sendRequest(encodeMessage(this.byteConfig, 'BII',
+                                          [SP.CLIENT.ESCARGOT_DEBUGGER_GET_SCOPE_VARIABLES,
+                                           stateIndex,
+                                           scopeIndex]));
+
+  }
+
+  public requestObjectVariables(objectIndex: number): Promise<any> {
     if (!this.lastBreakpointHit) {
       return Promise.reject(new Error('scope variables not allowed while app running'));
     }
 
     return this.sendRequest(encodeMessage(this.byteConfig, 'BI',
-                                          [SP.CLIENT.ESCARGOT_DEBUGGER_GET_SCOPE_VARIABLES,
-                                          level]));
+                                          [SP.CLIENT.ESCARGOT_DEBUGGER_GET_OBJECT,
+                                           objectIndex]));
 
   }
 
