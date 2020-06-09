@@ -31,6 +31,11 @@ export interface IAttachRequestArguments extends DebugProtocol.AttachRequestArgu
   program?: string;
 }
 
+export interface SourceSendingOptions {
+  // Actual state of source sending.
+  state: number;
+}
+
 export interface ILaunchRequestArguments extends DebugProtocol.LaunchRequestArguments {
   /** This is the absolute path to escargot executable. */
   program: string;

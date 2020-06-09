@@ -18,20 +18,20 @@
 
 import {
   DebugSession, InitializedEvent, OutputEvent, Thread, Source,
-  StoppedEvent, StackFrame, TerminatedEvent, ErrorDestination, Scope,
+  StoppedEvent, StackFrame, TerminatedEvent, ErrorDestination, Scope, Event,
 } from 'vscode-debugadapter';
 import { DebugProtocol } from 'vscode-debugprotocol';
 import * as Fs from 'fs';
 import * as Path from 'path';
 import * as Util from 'util';
-import { IAttachRequestArguments, ILaunchRequestArguments, TemporaryBreakpoint } from './EscargotDebuggerInterfaces';
+import { IAttachRequestArguments, ILaunchRequestArguments, TemporaryBreakpoint, SourceSendingOptions } from './EscargotDebuggerInterfaces';
 import { EscargotDebuggerClient, EscargotDebuggerOptions } from './EscargotDebuggerClient';
 import {
   EscargotDebugProtocolDelegate, EscargotDebugProtocolHandler, EscargotMessageScriptParsed,
   EscargotMessageBreakpointHit, EscargotBacktraceResult, EscargotScopeChain, EscargotScopeVariable,
 } from './EscargotProtocolHandler';
 import { Breakpoint } from './EscargotBreakpoints';
-import { LOG_LEVEL } from './EscargotDebuggerConstants';
+import { LOG_LEVEL, SOURCE_SENDING_STATES } from './EscargotDebuggerConstants';
 
 class EscargotDebugSession extends DebugSession {
 
@@ -43,6 +43,7 @@ class EscargotDebugSession extends DebugSession {
   private _debugLog: number = 0;
   private _debuggerClient: EscargotDebuggerClient;
   private _protocolhandler: EscargotDebugProtocolHandler;
+  private _sourceSendingOptions: SourceSendingOptions;
 
   public constructor() {
     super();
@@ -76,6 +77,10 @@ class EscargotDebugSession extends DebugSession {
     response.body.supportsStepBack = false;
     response.body.supportsDelayedStackTraceLoading = true;
     response.body.supportsSetVariable = true;
+
+    this._sourceSendingOptions = <SourceSendingOptions>{
+      state: SOURCE_SENDING_STATES.NOP
+    };
 
     this.sendResponse(response);
   }
@@ -144,7 +149,8 @@ class EscargotDebugSession extends DebugSession {
       onExceptionHit: (data: string) => this.onExceptionHit(data),
       onScriptParsed: (data: EscargotMessageScriptParsed) => this.onScriptParsed(data),
       onError: (code: number, message: string) => this.onClose(),
-      onOutput: (message: string) => this.logOutput(message)
+      onOutput: (message: string) => this.logOutput(message),
+      onWaitForSource: () => this.onWaitForSource()
     };
 
     this._protocolhandler = new EscargotDebugProtocolHandler(
@@ -418,7 +424,7 @@ class EscargotDebugSession extends DebugSession {
         let scopeVariables: Array<EscargotScopeVariable>;
         const {scopeIndex, stateIndex} = this._protocolhandler.resolveScopeChainElementByID(args.variablesReference);
 
-        if (stateIndex == -1) {
+        if (stateIndex === -1) {
           scopeVariables = await this._protocolhandler.requestObjectVariables(scopeIndex);
         } else {
           scopeVariables = await this._protocolhandler.requestScopeVariables(stateIndex, scopeIndex);
@@ -426,7 +432,7 @@ class EscargotDebugSession extends DebugSession {
 
         for (const variable of scopeVariables) {
           let variablesReference = 0;
-          if (variable.objectIndex != -1) {
+          if (variable.objectIndex !== -1) {
             variablesReference = this._protocolhandler.addScopeVariableObject(variable.objectIndex);
           }
 
@@ -444,6 +450,31 @@ class EscargotDebugSession extends DebugSession {
       }  catch (error) {
         this.log(error.message, LOG_LEVEL.ERROR);
         this.sendErrorResponse(response, 0, (<Error>error).message);
+      }
+    }
+
+    protected customRequest(command: string, response: DebugProtocol.Response, args: any): void {
+      switch (command) {
+        case 'sendSource': {
+          this._sourceSendingOptions.state = SOURCE_SENDING_STATES.IN_PROGRESS;
+          this._protocolhandler.sendClientSource(args.program)
+            .then(() => {
+              this.log('Source has been sent to the engine.', LOG_LEVEL.SESSION);
+              this._sourceSendingOptions.state = SOURCE_SENDING_STATES.WAITING;
+              if (args.program.isLast) {
+                this._sourceSendingOptions.state = SOURCE_SENDING_STATES.LAST_SENT;
+              }
+              this.sendResponse(response);
+            })
+            .catch(error => {
+              this.log(error.message, LOG_LEVEL.ERROR);
+              this._sourceSendingOptions.state = SOURCE_SENDING_STATES.NOP;
+              this.sendErrorResponse(response, <Error>error, ErrorDestination.User);
+            });
+          return;
+        }
+        default:
+          super.customRequest(command, response, args);
       }
     }
 
@@ -524,6 +555,22 @@ class EscargotDebugSession extends DebugSession {
     this.log('onScriptParsed', LOG_LEVEL.SESSION);
 
     this.handleSource(data);
+  }
+
+  private async onWaitForSource(): Promise<void> {
+    this.log('onWaitForSource', LOG_LEVEL.SESSION);
+
+    if (this._sourceSendingOptions.state === SOURCE_SENDING_STATES.NOP) {
+      this.sendEvent(new Event('readSources'));
+      this._sourceSendingOptions.state = SOURCE_SENDING_STATES.WAITING;
+    } else if (this._sourceSendingOptions.state === SOURCE_SENDING_STATES.WAITING) {
+      this.sendEvent(new Event('sendNextSource'));
+    } else if (this._sourceSendingOptions.state === SOURCE_SENDING_STATES.LAST_SENT) {
+      if (!this._sourceSendingOptions.contextReset) {
+        this._sourceSendingOptions.state = SOURCE_SENDING_STATES.NOP;
+        this._protocolhandler.sendClientSourceControl();
+      }
+    }
   }
 
   private onClose(): void {
