@@ -110,8 +110,8 @@ const processCustomEvent = async (e: vscode.DebugSessionCustomEvent): Promise<an
 
         if (sources.length) {
           program = {
-            name: pathArray.pop(),
-            source: sources.pop(),
+            name: pathArray.shift(),
+            source: sources.shift(),
             isLast: sources.length === 0
           };
         }
