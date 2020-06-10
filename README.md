@@ -7,7 +7,6 @@
 - [Features](#features)
 - [Requirements](#requirements)
 - [How to use](#how-to-use)
-- [Tizen Studio](#tizen-studio)
 - [License](#license)
 
 # Introduction

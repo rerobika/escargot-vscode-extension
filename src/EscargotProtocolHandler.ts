@@ -397,10 +397,6 @@ export class EscargotDebugProtocolHandler {
 
   public onFunctionPtr(data: Uint8Array): void {
     this.logPacket('Function Ptr', true);
-    // if (this.evalsPending) {
-    //   return;
-    // }
-
 
     const decoded = this.decodeMessage('CII', data, 1);
 
@@ -448,10 +444,6 @@ export class EscargotDebugProtocolHandler {
   public onBreakpointList(data: Uint8Array): void {
     this.logPacket('Breakpoint List', true);
 
-    // if (this.evalsPending) {
-    //   return;
-    // }
-
     if (data.byteLength % 8 !== 1 || data.byteLength < 1 + 8) {
       throw new Error('unexpected breakpoint list message length');
     }
@@ -497,10 +489,6 @@ export class EscargotDebugProtocolHandler {
   public onSourceCode(data: Uint8Array): void {
     this.logPacket(`Source Code`, true);
 
-    // if (this.evalsPending) {
-    //   return;
-    // }
-
     this.stringReceiverMessage = SP.SERVER.ESCARGOT_DEBUGGER_SOURCE_8BIT;
     this.stringReceivedCb = this.onSourceCodeEnd;
     this.receiveString(data);
@@ -530,10 +518,6 @@ export class EscargotDebugProtocolHandler {
 
   public onFileName(data: Uint8Array): void {
     this.logPacket('File Name', true);
-
-    // if (this.evalsPending) {
-    //   return;
-    // }
 
     this.stringReceiverMessage = SP.SERVER.ESCARGOT_DEBUGGER_FILE_NAME_8BIT;
     this.stringReceivedCb = this.onFileNameEnd;
