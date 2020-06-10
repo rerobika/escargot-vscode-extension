@@ -98,17 +98,13 @@ class EscargotDebugSession extends DebugSession {
       return;
     }
 
-    if (!args.port || args.port <= 0 || args.port > 35535) {
-      this.sendErrorResponse(response, new Error('Must specify a valid port'));
-      return;
-    }
-
     if (!args.localRoot || args.localRoot === '') {
       this.sendErrorResponse(response, new Error('Must specify a localRoot'));
       return;
     }
 
     this._attachArgs = args;
+    this._attachArgs.port = 6501;
     if (args.debugLog in LOG_LEVEL) {
       this._debugLog = args.debugLog;
     } else {
@@ -123,16 +119,14 @@ class EscargotDebugSession extends DebugSession {
       this.sendErrorResponse(response, new Error('Must specify an address'));
       return;
     }
-    if (!args.port || args.port <= 0 || args.port > 35535) {
-      this.sendErrorResponse(response, new Error('Must specify a valid port'));
-      return;
-    }
+
     if (!args.localRoot || args.localRoot === '') {
       this.sendErrorResponse(response, new Error('Must specify a localRoot'));
       return;
     }
 
     this._launchArgs = args;
+    this._launchArgs.port = 6501;
     if (args.debugLog in LOG_LEVEL) {
       this._debugLog = args.debugLog;
     } else {

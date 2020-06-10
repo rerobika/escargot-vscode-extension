@@ -30,7 +30,6 @@ const defaultConfig = [{
   address: 'localhost',
   port: 6501,
   localRoot: '${workspaceRoot}',
-  stopOnEntry: false,
   debugLog: 0,
   program: '${command:AskForProgramName}'
 }];

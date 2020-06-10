@@ -66,8 +66,7 @@
     "*",
     "onLanguage:javascript",
     "onDebug",
-    "onCommand:escargot-debug.initialConfigurations",
-    "onCommand:iotjs-debug.getProgramName"
+    "onCommand:escargot-debug.initialConfigurations"
   ],
   "main": "./out/extension.js",
   "files": [
@@ -97,11 +96,6 @@
                 "description": "IP address on which the server listening. Default is 'localhost'.",
                 "default": "localhost"
               },
-              "port": {
-                "type": "number",
-                "description": "Debug port to attach to. Default is 6501.",
-                "default": 6501
-              },
               "localRoot": {
                 "type": [
                   "string",
@@ -109,11 +103,6 @@
                 ],
                 "description": "The local source root.",
                 "default": null
-              },
-              "stopOnEntry": {
-                "type": "boolean",
-                "description": "Autmoatically stop the program after launch,",
-                "default": true
               },
               "debugLog": {
                 "type": "number",
@@ -129,11 +118,6 @@
                 "type": "string",
                 "description": "Absolute path to the program.",
                 "default": "escargot"
-              },
-              "stopOnEntry": {
-                "type": "boolean",
-                "description": "Automatically stop program after launch.",
-                "default": false
               },
               "args": {
                 "type": "array",
@@ -165,11 +149,6 @@
                 "type": "string",
                 "description": "IP address on which the server listening. Default is 'localhost'.",
                 "default": "localhost"
-              },
-              "port": {
-                "type": "number",
-                "description": "Debug port.",
-                "default": 6501
               }
             }
           }
@@ -183,9 +162,7 @@
               "type": "escargot",
               "request": "attach",
               "address": "localhost",
-              "port": 6501,
               "localRoot": "${workspaceRoot}",
-              "stopOnEntry": false,
               "debugLog": 0
             }
           },
@@ -197,9 +174,7 @@
               "type": "escargot",
               "request": "launch",
               "program": "escargot",
-              "stopOnEntry": false,
               "localRoot": "${workspaceRoot}",
-              "port": 6501,
               "address": "localhost",
               "debugLog": 0,
               "args": [

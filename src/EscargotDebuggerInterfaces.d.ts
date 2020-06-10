@@ -23,8 +23,7 @@ export interface IAttachRequestArguments extends DebugProtocol.AttachRequestArgu
   port: number;
   /** VSCode's root directory. */
   localRoot: string;
-  /** Automatically stop target after launch. */
-  stopOnEntry?: boolean;
+
   /** Allows to log debug messages to console. */
   debugLog: number;
   /** Filename. */
