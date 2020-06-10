@@ -24,6 +24,8 @@ import { DebugProtocol } from 'vscode-debugprotocol';
 import * as Fs from 'fs';
 import * as Path from 'path';
 import * as Util from 'util';
+import * as Cp from 'child_process';
+import NodeSSH from 'node-ssh';
 import { IAttachRequestArguments, ILaunchRequestArguments, TemporaryBreakpoint, SourceSendingOptions } from './EscargotDebuggerInterfaces';
 import { EscargotDebuggerClient, EscargotDebuggerOptions } from './EscargotDebuggerClient';
 import {
@@ -40,6 +42,7 @@ class EscargotDebugSession extends DebugSession {
 
   private _attachArgs: IAttachRequestArguments;
   private _launchArgs: ILaunchRequestArguments;
+  private _escargotProcess: Cp.ChildProcess = null;
   private _debugLog: number = 0;
   private _debuggerClient: EscargotDebuggerClient;
   private _protocolhandler: EscargotDebugProtocolHandler;
@@ -133,7 +136,39 @@ class EscargotDebugSession extends DebugSession {
       this.sendErrorResponse(response, new Error('No log level given'));
     }
 
-    this.connectToDebugServer(response, args);
+    const launchScript = () => {
+      const programArgs = args.args || [];
+      const cwd = args.localRoot || process.cwd();
+      const env = args.env || process.env;
+      let ssh = new NodeSSH();
+
+      if (args.address === 'localhost') {
+        const localProcess = Cp.spawn(args.program, [...programArgs], {cwd, env});
+        localProcess.stdout.on('data', (data: Buffer) => this.sendEvent(new OutputEvent(data + '', 'stdout')));
+        localProcess.stderr.on('data', (data: Buffer) => this.sendEvent(new OutputEvent(data + '', 'stderr')));
+        localProcess.on('exit', () => this.sendEvent(new TerminatedEvent ()));
+        localProcess.on('error', (error: Error) => this.sendEvent(new OutputEvent(error.message + '\n')));
+        this._escargotProcess = localProcess;
+      } else {
+        ssh.connect({
+          host: args.address,
+          username: 'root',
+          privateKey: `${process.env.HOME}/.ssh/id_rsa`
+        })
+        .then(() => {
+          ssh.execCommand(`${args.program} ${programArgs.join(' ')}`, ).then((result) => {
+            this.log(result.stdout);
+            this.log(result.stderr);
+          });
+        });
+      }
+    };
+    if (args.program) {
+      launchScript();
+    }
+    setTimeout(() => {
+      this.connectToDebugServer(response, args);
+    }, 500);
   }
 
   private connectToDebugServer(response: DebugProtocol.LaunchResponse | DebugProtocol.AttachResponse,
@@ -174,6 +209,10 @@ class EscargotDebugSession extends DebugSession {
   protected disconnectRequest(
     response: DebugProtocol.DisconnectResponse, args: DebugProtocol.DisconnectArguments
   ): void {
+    if (this._escargotProcess) {
+      this._escargotProcess.kill();
+    }
+
     this._debuggerClient.disconnect();
     this.sendEvent(new TerminatedEvent());
     this.sendResponse(response);

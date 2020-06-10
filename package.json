@@ -55,7 +55,7 @@
     "all-unpacker": "^0.1.2",
     "babel-preset-env": "^1.7.0",
     "ncp": "^2.0.0",
-    "node-ssh": "^5.1.2",
+    "node-ssh": "^10.0.2",
     "npm-watch": "^0.6.0",
     "rimraf": "^2.6.3",
     "vscode-debugadapter": "^1.34.0",
@@ -162,7 +162,8 @@
               "type": "escargot",
               "request": "attach",
               "address": "localhost",
-              "localRoot": "${workspaceRoot}",
+              "//": "For using the default option please remove this line and the whitespace between `$` and `{`",
+              "localRoot": "$ {workspaceRoot}",
               "debugLog": 0
             }
           },
@@ -174,7 +175,8 @@
               "type": "escargot",
               "request": "launch",
               "program": "escargot",
-              "localRoot": "${workspaceRoot}",
+              "//": "For using the default option please remove this line and the whitespace between `$` and `{`",
+              "localRoot": "$ {workspaceRoot}",
               "address": "localhost",
               "debugLog": 0,
               "args": [

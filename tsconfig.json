@@ -18,6 +18,7 @@
     "compilerOptions": {
         "module": "commonjs",
         "moduleResolution": "node",
+        "esModuleInterop": true,
         "target": "es6",
         "outDir": "out",
         "lib": [

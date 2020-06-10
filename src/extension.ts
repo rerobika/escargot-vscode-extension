@@ -24,14 +24,12 @@ let sources: string[];
 let pathArray = [];
 
 const defaultConfig = [{
-  name: 'Attach',
+  name: 'Escargot: Attach',
   type: 'escargot',
   request: 'attach',
   address: 'localhost',
-  port: 6501,
   localRoot: '${workspaceRoot}',
   debugLog: 0,
-  program: '${command:AskForProgramName}'
 }];
 
 const provideInitialConfigurations = (): string => {
