@@ -142,6 +142,7 @@ export interface EscargotEvalResult {
 export interface EscargotScopeChain {
   name: string;
   scopeID: number;
+  expensive: boolean;
 }
 
 export interface EscargotScopeChainElement {
@@ -322,7 +323,7 @@ export class EscargotDebugProtocolHandler {
     }
 
     this.lastStopType = SP.CLIENT.ESCARGOT_DEBUGGER_STOP;
-    return this.resumeExec(SP.CLIENT.ESCARGOT_DEBUGGER_STEP);
+    return this.sendSimpleRequest(encodeMessage(this.byteConfig, 'B', [SP.CLIENT.ESCARGOT_DEBUGGER_STEP]));
   }
 
   public resume(): Promise<any> {
@@ -405,7 +406,7 @@ export class EscargotDebugProtocolHandler {
 
     const frame = <ParserFrame> {
       isFunction: this.isFunction,
-      scriptId: this.nextScriptID - 1,
+      scriptId: this.nextScriptID,
       line: decoded[1],
       column: decoded[2],
       name: this.functionName,
@@ -418,9 +419,12 @@ export class EscargotDebugProtocolHandler {
     const func = new ParsedFunction(decoded[0], frame);
     this.newFunctions[decoded[0]] = func;
 
-    // FIXME: it seems like this is probably unnecessarily keeping the
-    //   whole file's source to this point?
-    func.source = this.source.split(/\n/);
+    this.lines = [];
+    this.offsets = [];
+  }
+
+  private onParseDone(data: Uint8Array): void {
+    this.logPacket('Parse Done');
 
     const lineList: LineFunctionMap = {};
     for (const p in this.newFunctions) {
@@ -437,14 +441,8 @@ export class EscargotDebugProtocolHandler {
       }
     }
     this.lineLists.push(lineList);
-    this.lines = [];
-    this.offsets = [];
-    // this.nextScriptID++;
+    this.nextScriptID++;
     this.newFunctions = {};
-  }
-
-  private onParseDone(data: Uint8Array): void {
-    this.logPacket('Parse Function');
   }
 
   public onBreakpointList(data: Uint8Array): void {
@@ -522,12 +520,12 @@ export class EscargotDebugProtocolHandler {
     if (this.delegate.onScriptParsed) {
       this.delegate.onScriptParsed({
         'id': this.nextScriptID,
-        'name': this.sourceName || '',
+        'name': this.sourceName,
         'lineCount': this.source.split(/\n/).length,
       });
     }
 
-    this.nextScriptID++;
+    // this.nextScriptID++;
   }
 
   public onFileName(data: Uint8Array): void {
@@ -659,8 +657,10 @@ export class EscargotDebugProtocolHandler {
       }
 
       this.scopeList.set(this.scopeID, { scopeIndex : i - 1 });
+      const expensive: boolean = data[i] === SP.ESCARGOT_DEBUGGER_SCOPE_TYPE.ESCARGOT_DEBUGGER_SCOPE_GLOBAL;
       this.currentScopeChain.push({name: this.scopeNameMap[data[i]],
-                                   scopeID: this.scopeID++});
+                                   scopeID: this.scopeID++,
+                                   expensive});
     }
   }
 
@@ -1173,7 +1173,7 @@ export class EscargotDebugProtocolHandler {
     return result;
   }
 
-  public sendClientSourceControl(): Promise<any> {
+  public sendClientSourceEnd(): Promise<any> {
      return this.sendSimpleRequest(encodeMessage(this.byteConfig,
                                                  'B',
                                                  [SP.CLIENT.ESCARGOT_DEBUGGER_THERE_WAS_NO_SOURCE]));
@@ -1185,9 +1185,8 @@ export class EscargotDebugProtocolHandler {
     }
 
     if (!program.name) {
-      return this.sendSimpleRequest(encodeMessage(this.byteConfig,
-                                                  'B',
-                                                  [SP.CLIENT.ESCARGOT_DEBUGGER_THERE_WAS_NO_SOURCE]));
+      return this.sendClientSourceEnd();
+
     }
 
     let {name: fileName, source: fileSourceCode} = program;

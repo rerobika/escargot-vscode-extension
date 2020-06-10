@@ -76,7 +76,7 @@ class EscargotDebugSession extends DebugSession {
     response.body.supportsEvaluateForHovers = false;
     response.body.supportsStepBack = false;
     response.body.supportsDelayedStackTraceLoading = true;
-    response.body.supportsSetVariable = true;
+    response.body.supportsSetVariable = false;
 
     this._sourceSendingOptions = <SourceSendingOptions>{
       state: SOURCE_SENDING_STATES.NOP
@@ -242,8 +242,8 @@ class EscargotDebugSession extends DebugSession {
 
       const newBreakpoints: TemporaryBreakpoint[] = await Promise.all(newBps.map(async (breakpoint, index) => {
         try {
-          const jerryBreakpoint: Breakpoint = this._protocolhandler.findBreakpoint(scriptId, breakpoint.line);
-          await this._protocolhandler.updateBreakpoint(jerryBreakpoint, true);
+          const escargotBreakpoint: Breakpoint = this._protocolhandler.findBreakpoint(scriptId, breakpoint.line);
+          await this._protocolhandler.updateBreakpoint(escargotBreakpoint, true);
           return <TemporaryBreakpoint>{verified: true, line: breakpoint.line};
         } catch (error) {
           this.log(error.message, LOG_LEVEL.ERROR);
@@ -262,8 +262,8 @@ class EscargotDebugSession extends DebugSession {
       const removeBps: Breakpoint[] = activeBps.filter(b => vscodeBreakpointsLines.indexOf(b.line) === -1);
 
       removeBps.forEach(async b => {
-        const jerryBreakpoint = this._protocolhandler.findBreakpoint(scriptId, b.line);
-        await this._protocolhandler.updateBreakpoint(jerryBreakpoint, false);
+        const escargotBreakpoint = this._protocolhandler.findBreakpoint(scriptId, b.line);
+        await this._protocolhandler.updateBreakpoint(escargotBreakpoint, false);
       });
 
       response.body = { breakpoints: [...persistingBreakpoints, ...newBreakpoints] };
@@ -324,8 +324,8 @@ class EscargotDebugSession extends DebugSession {
         });
 
         removeBps.forEach(async b => {
-          const jerryBreakpoint = this._protocolhandler.findBreakpoint(scriptId, b.line);
-          await this._protocolhandler.updateBreakpoint(jerryBreakpoint, false);
+          const escargotBreakpoint = this._protocolhandler.findBreakpoint(scriptId, b.line);
+          await this._protocolhandler.updateBreakpoint(escargotBreakpoint, false);
         });
 
         undefinedFBreakpoins = [
@@ -402,7 +402,7 @@ class EscargotDebugSession extends DebugSession {
           this._protocolhandler.setScopeChainElementState(scope.scopeID, btDepth);
           scopes.push(new Scope(scope.name,
                                 scope.scopeID,
-                                true));
+                                scope.expensive));
         }
 
         response.body = {
@@ -568,7 +568,7 @@ class EscargotDebugSession extends DebugSession {
     } else if (this._sourceSendingOptions.state === SOURCE_SENDING_STATES.LAST_SENT) {
       if (!this._sourceSendingOptions.contextReset) {
         this._sourceSendingOptions.state = SOURCE_SENDING_STATES.NOP;
-        this._protocolhandler.sendClientSourceControl();
+        this._protocolhandler.sendClientSourceEnd();
       }
     }
   }
